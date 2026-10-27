@@ -56,8 +56,23 @@ export function computeWebhookSignature(hmacKey: string, rawBody: string): strin
 }
 
 /**
- * Sign a media URL path so the media route can't be used as an open proxy to Ring.
+ * Whether a value was produced by `encrypt()`.
  */
-export function signMediaPath(hmacKey: string, path: string): string {
-  return createHmac('sha256', hmacKey).update(`media:${path}`).digest('base64url');
+export function isEncrypted(value: string): boolean {
+  return value.startsWith(`${ALGO_PREFIX}:`);
+}
+
+/**
+ * Derive the key that signs media URLs from the Ring HMAC key, so the key Ring uses
+ * to sign webhooks isn't also used to sign URLs that end up in thread history.
+ */
+export function deriveMediaKey(hmacKey: string): string {
+  return Buffer.from(hkdfSync('sha256', hmacKey, '', 'mastra-ring-media', 32)).toString('hex');
+}
+
+/**
+ * Sign a media URL path and its expiry so the media route can't be used as an open proxy to Ring.
+ */
+export function signMediaPath(mediaKey: string, path: string, expires: number): string {
+  return createHmac('sha256', mediaKey).update(`media:${path}:${expires}`).digest('base64url');
 }

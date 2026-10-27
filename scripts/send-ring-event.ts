@@ -4,7 +4,7 @@ import { createHmac, randomBytes } from "node:crypto";
 const deviceId = process.env.RING_DEVICE_ID ?? "ava1.ring.device.example";
 const accountId = process.env.RING_ACCOUNT_ID ?? "ava1.ring.account.example";
 
-const serverUrl = process.env.SERVER_URL ?? "http://localhost:4111";
+const serverUrl = process.env.MASTRA_SERVER_URL ?? "http://localhost:4111";
 
 export const sendRingEvent = async (type: string, idSuffix: string, subType?: string) => {
   const timestamp = Date.now();

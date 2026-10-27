@@ -34,16 +34,16 @@ A [Mastra](https://mastra.ai) agent that watches a Ring doorbell. Ring webhooks 
    cp .env.example .env
    ```
 
-2. Fill in `.env` with your Ring app credentials (Client ID, Client Secret, HMAC Signature Key), database and API key. Set `SERVER_URL` to the public URL of your server.
+2. Fill in `.env` with your Ring app credentials (Client ID, Client Secret, HMAC Signature Key), database and API key. Set `MASTRA_SERVER_URL` to the public URL of your server.
 
 3. In the Ring Developer Console, open your app's **Account linking** settings and set:
 
    | Field | Value |
    |---|---|
-   | Account Link URL | `<SERVER_URL>/ring/link` |
-   | App Homepage URL | `<SERVER_URL>/ring/home` |
-   | Token Exchange URL | `<SERVER_URL>/ring/token` |
-   | Webhook URL | `<SERVER_URL>/ring/webhook` |
+   | Account Link URL | `<MASTRA_SERVER_URL>/ring/link` |
+   | App Homepage URL | `<MASTRA_SERVER_URL>/ring/home` |
+   | Token Exchange URL | `<MASTRA_SERVER_URL>/ring/token` |
+   | Webhook URL | `<MASTRA_SERVER_URL>/ring/webhook` |
 
    For local development, expose `localhost:4111` with a tunnel such as `npx cloudflared tunnel --url http://localhost:4111` and use its URL.
 
@@ -59,7 +59,7 @@ A [Mastra](https://mastra.ai) agent that watches a Ring doorbell. Ring webhooks 
 
 ## Test scripts
 
-The scripts send signed test webhooks to `SERVER_URL`:
+The scripts send signed test webhooks to `MASTRA_SERVER_URL`:
 
 ```bash title="Terminal"
 npx tsx scripts/button-press.ts
@@ -77,4 +77,4 @@ Set `RING_DEVICE_ID` in `.env` to your device's ID so the snapshot and clip tool
 npx mastra deploy
 ```
 
-After deploying, point the Ring account linking URLs at the deployed URL, set `SERVER_URL` on the deployment, and link the app again from the Ring Appstore.
+After deploying, set `MASTRA_SERVER_URL` to the deployed URL in the deployment's environment variables, point the Ring account linking URLs at it, and link the app again from the Ring Appstore.
