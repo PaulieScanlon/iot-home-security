@@ -1,0 +1,12 @@
+node_modules
+.env
+.mastra
+dist
+*.db
+.ring
+notes.md
+research.md
+article.mdx
+ring-config.md
+*.db-shm
+*.db-wal
