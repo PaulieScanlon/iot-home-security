@@ -17,6 +17,7 @@ export const homeSecurityAgent = new Agent({
       clientId: process.env.RING_CLIENT_ID,
       clientSecret: process.env.RING_CLIENT_SECRET,
       hmacKey: process.env.RING_HMAC_KEY,
+      baseUrl: process.env.MASTRA_SERVER_URL,
       target: async () => {
         return { resourceId: "home-security-agent", threadId: "home-security" };
       },
