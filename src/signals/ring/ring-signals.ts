@@ -59,12 +59,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  *
  * const agent = new Agent({ signals: [ring], ... });
  *
- * export const mastra = new Mastra({
- *   agents: { agent },
- *   storage,
- *   server: { apiRoutes: ring.getRoutes() },
- * });
+ * export const mastra = new Mastra({ agents: { agent }, storage });
  * ```
+ *
+ * Mastra adds the routes from `getRoutes()` to the server when the agent is registered.
  */
 export class RingSignals extends SignalProvider<"ring-signals"> {
   readonly id = "ring-signals" as const;
@@ -93,6 +91,10 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   /**
    * Registers the Ring routes on the Mastra server when the agent is added to Mastra,
    * so they don't need to be added to `server.apiRoutes` by hand.
+   *
+   * Temporary: remove once `@mastra/core` merges `getRoutes()` from signal providers
+   * itself (https://github.com/mastra-ai/mastra/pull/28575). Core skips routes that are
+   * already registered, so keeping this alongside the core hook won't mount them twice.
    */
   override __registerMastra(mastra: Parameters<SignalProvider["__registerMastra"]>[0]): void {
     super.__registerMastra(mastra);
@@ -171,7 +173,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   // ── Routes ──────────────────────────────────────────────────────────
 
   /**
-   * API routes for Ring account linking, webhooks and media. Add them to `server.apiRoutes`.
+   * API routes for Ring account linking, webhooks and media. Mastra adds them to `server.apiRoutes` automatically.
    *
    * | Ring setting       | Route                         |
    * | ------------------ | ----------------------------- |
