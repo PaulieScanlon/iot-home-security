@@ -75,12 +75,17 @@ export type RingSignalsOptions = {
   clientId?: string;
   /** Ring app Client Secret. Defaults to `RING_CLIENT_SECRET`. */
   clientSecret?: string;
-  /** Ring app HMAC Signature Key, used for link nonces, webhook signatures and signed media URLs. Defaults to `RING_HMAC_KEY`. */
+  /** Ring app HMAC Signature Key, used to verify link nonces and webhook signatures, and to derive the media URL signing key. Defaults to `RING_HMAC_KEY`. */
   hmacKey?: string;
-  /** Key used to encrypt stored Ring tokens. Defaults to `MASTRA_ENCRYPTION_KEY`. Tokens are stored unencrypted when unset. */
+  /** Key used to encrypt stored Ring tokens. Defaults to `MASTRA_ENCRYPTION_KEY`. When unset, tokens are stored unencrypted and a warning is logged. */
   encryptionKey?: string;
-  /** Public base URL of the Mastra server, used to build media links. Defaults to `http://localhost:4111`. */
-  publicUrl?: string;
+  /**
+   * Public base URL of the Mastra server, used to build media links.
+   * Defaults to `MASTRA_SERVER_URL`, then the Mastra server's host and port.
+   */
+  baseUrl?: string;
+  /** How long signed snapshot and clip links stay valid, in milliseconds. Defaults to 7 days. */
+  mediaUrlTtlMs?: number;
   /** Path prefix for the Ring routes. Defaults to `/ring`. */
   routePrefix?: string;
   /** `User-Agent` sent to the Ring API. Defaults to `MastraRingSignals/1.0`. */
@@ -91,7 +96,7 @@ export type RingSignalsOptions = {
    */
   hardwareId?: string;
   /**
-   * Where events are delivered when no thread has subscribed to the device with `watchDevice()`.
+   * Where events are delivered when no thread has subscribed to the device with `subscribeThread()`.
    * Defaults to `{ resourceId: <agent id>, threadId: <device id> }`.
    */
   target?: SignalProviderTarget | RingTargetResolver;
