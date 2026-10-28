@@ -223,3 +223,12 @@ a {
 .message.priority-low {
   border-left: 4px solid #6b7280;
 }
+
+.media {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  border-radius: 8px;
+  margin: 8px 0 4px;
+  background: #000;
+}

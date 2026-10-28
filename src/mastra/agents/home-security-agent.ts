@@ -27,11 +27,13 @@ export const homeSecurityAgent = new Agent({
           priority: "medium",
           summary: "Motion was detected at the front door.",
           attributes: (event) => ({ ...event.data.attributes, custom_attribute: "front door" })
-        }
+        },
+        device_offline: { priority: "low", summary: "The doorbell went offline.", coalesce: true },
+        device_online: { priority: "low", summary: "The doorbell came back online.", coalesce: true }
       },
       tools: {
-        snapshot: true,
-        clip: { audio: true, durationMs: 15_000 }
+        snapshot: { inReply: false },
+        clip: { inReply: false, audio: true, durationMs: 15_000 }
       }
     })
   ],

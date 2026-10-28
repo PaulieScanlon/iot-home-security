@@ -29,13 +29,19 @@ const Part = ({ part }: { part: ChatPart }) => {
   }
 
   if (part.kind === "tool") {
+    const url = (part.result as { url?: string } | undefined)?.url;
+
     return (
-      <details className="tool">
-        <summary>
-          🔧 {part.toolName} {part.error ? "failed" : part.result ? "done" : "running…"}
-        </summary>
-        <pre>{JSON.stringify({ args: part.args, result: part.result, error: part.error }, null, 2)}</pre>
-      </details>
+      <div className="tool-part">
+        {url && part.toolName === "ring_snapshot" ? <img className="media" src={url} alt="Ring snapshot" /> : null}
+        {url && part.toolName === "ring_clip" ? <video className="media" src={url} controls preload="metadata" /> : null}
+        <details className="tool">
+          <summary>
+            🔧 {part.toolName} {part.error ? "failed" : part.result ? "done" : "running…"}
+          </summary>
+          <pre>{JSON.stringify({ args: part.args, result: part.result, error: part.error }, null, 2)}</pre>
+        </details>
+      </div>
     );
   }
 

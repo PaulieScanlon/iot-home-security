@@ -115,7 +115,20 @@ export type RingSignalsOptions = {
   tools?: RingToolsOptions;
 };
 
+export type RingSnapshotToolOptions = {
+  /**
+   * Ask the agent to show the snapshot in its reply as a markdown image. Defaults to `true`.
+   * Set to `false` when your app renders the image from the `ring_snapshot` tool result.
+   */
+  inReply?: boolean;
+};
+
 export type RingClipToolOptions = {
+  /**
+   * Ask the agent to link the clip in its reply as markdown. Defaults to `true`.
+   * Set to `false` when your app renders the clip from the `ring_clip` tool result.
+   */
+  inReply?: boolean;
   /** Include audio in clips. Defaults to `true`. */
   audio?: boolean;
   /** Clip length in milliseconds, up to 15 minutes. Defaults to 15 seconds. */
@@ -124,7 +137,7 @@ export type RingClipToolOptions = {
 
 export type RingToolsOptions = {
   /** `ring_snapshot`: a still image for an event. */
-  snapshot?: boolean;
+  snapshot?: boolean | RingSnapshotToolOptions;
   /** `ring_clip`: a link to a video clip for an event. */
   clip?: boolean | RingClipToolOptions;
 };
