@@ -23,6 +23,7 @@
     "@mastra/libsql": "^1.27.0",
     "@mastra/memory": "^1.39.0",
     "@mastra/observability": "^1.21.0",
+    "@photon-ai/chat-adapter-imessage": "^3.2.0",
     "dotenv": "17.4.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

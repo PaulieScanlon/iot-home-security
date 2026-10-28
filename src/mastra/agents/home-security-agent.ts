@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { RingSignals } from "../../signals/ring";
 // import { RingSignals } from "@mastra/ring-signals";
+import { createiMessageAdapter } from "@photon-ai/chat-adapter-imessage";
 
 export const homeSecurityAgent = new Agent({
   id: "home-security-agent",
@@ -37,6 +38,16 @@ export const homeSecurityAgent = new Agent({
       }
     })
   ],
+  channels: {
+    adapters: {
+      imessage: {
+        adapter: createiMessageAdapter(),
+        toolDisplay: "text",
+        gateway: false
+      }
+    },
+    threadContext: { maxMessages: 0 }
+  },
   memory: new Memory({
     options: {
       observationalMemory: true
