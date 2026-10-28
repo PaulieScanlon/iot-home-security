@@ -71,6 +71,16 @@ npx tsx scripts/device-offline.ts              # sends 5, the 5th wakes the agen
 
 Set `RING_DEVICE_ID` in `.env` to your device's ID so the snapshot and clip tools can fetch media. Test timestamps have no recording behind them, so clips only work for real doorbell presses.
 
+## Thread viewer
+
+`src/app` is a small Vite + React app that subscribes to the `home-security` thread with `@mastra/client-js`. It has two views: **Chat** renders messages, notifications, tool calls and snapshots, and **Raw** shows every chunk the subscription receives.
+
+```bash title="Terminal"
+npm run app
+```
+
+It connects to `VITE_MASTRA_URL` (default `http://localhost:4111`). Point it at the deployed server to see live runs.
+
 ## Deploy
 
 ```bash title="Terminal"

@@ -108,6 +108,25 @@ export type RingSignalsOptions = {
    * Defaults to `DEFAULT_RING_INSTRUCTIONS`.
    */
   instructions?: string | false;
+  /**
+   * Tools added to the agent. Defaults to both tools enabled.
+   * When set, only the tools listed here are added.
+   */
+  tools?: RingToolsOptions;
+};
+
+export type RingClipToolOptions = {
+  /** Include audio in clips. Defaults to `true`. */
+  audio?: boolean;
+  /** Clip length in milliseconds, up to 15 minutes. Defaults to 15 seconds. */
+  durationMs?: number;
+};
+
+export type RingToolsOptions = {
+  /** `ring_snapshot`: a still image for an event. */
+  snapshot?: boolean;
+  /** `ring_clip`: a link to a video clip for an event. */
+  clip?: boolean | RingClipToolOptions;
 };
 
 export type RingTokens = {

@@ -92,8 +92,12 @@ export class RingApiClient {
    * Download a recorded clip. Returns the response so callers can retry `416` and `425`
    * while Ring finishes processing the recording.
    */
-  downloadClip(auth: RingAuth, deviceId: string, timestamp: number, durationMs: number): Promise<Response> {
-    return this.#media(auth, deviceId, 'video', { timestamp, duration: durationMs });
+  downloadClip(auth: RingAuth, deviceId: string, timestamp: number, durationMs: number, audio: boolean): Promise<Response> {
+    return this.#media(auth, deviceId, 'video', {
+      timestamp,
+      duration: durationMs,
+      audio_options: { audio_enabled: audio },
+    });
   }
 
   #headers(auth: RingAuth): Record<string, string> {

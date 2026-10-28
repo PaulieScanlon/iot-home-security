@@ -15,17 +15,29 @@ import type { RingAccount, RingEventNotification, RingEventType, RingSignalsOpti
 const PLATFORM = "ring";
 
 /**
- * Default guidance added to the agent's system prompt for Ring notifications.
+ * Guidance added to the agent's system prompt for Ring notifications, covering only the enabled tools.
+ * It depends only on config, so it's the same on every request and doesn't invalidate the prompt cache.
  */
-export const DEFAULT_RING_INSTRUCTIONS = `Ring events arrive as <notification source="ring"> messages with deviceId and timestamp attributes.
-When a notification has type="button_press":
-1. Call ring_snapshot with its deviceId and timestamp, then describe who or what is at the door.
-2. Call ring_clip with the same deviceId and timestamp.
-3. In your reply, show the snapshot url as a markdown image and link the clip url as [Watch clip](url).`;
+export const buildRingInstructions = (tools: { snapshot: boolean; clip: boolean }): string => {
+  const steps = [
+    ...(tools.snapshot ? ["Call ring_snapshot with its deviceId and timestamp, then describe who or what is at the door. Show the snapshot url as a markdown image."] : []),
+    ...(tools.clip ? ["Call ring_clip with the same deviceId and timestamp, and link the clip url as [Watch clip](url)."] : [])
+  ];
+  const lines = ['Ring events arrive as <notification source="ring"> messages with deviceId and timestamp attributes.'];
+  if (steps.length > 0) {
+    lines.push('When a notification has type="button_press":', ...steps.map((step, index) => `${index + 1}. ${step}`));
+  }
+  return lines.join("\n");
+};
+
+/**
+ * Default guidance when both tools are enabled.
+ */
+export const DEFAULT_RING_INSTRUCTIONS = buildRingInstructions({ snapshot: true, clip: true });
 const LINK_WINDOW_MS = 10 * 60 * 1000;
 const SNAPSHOT_WINDOW_MS = 15_000;
 const SNAPSHOT_LOOK_BACK_MS = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
-const CLIP_DURATION_MS = 15_000;
+const DEFAULT_CLIP_DURATION_MS = 15_000;
 const CLIP_READY_TIMEOUT_MS = 120_000;
 const CLIP_RETRY_MS = 5_000;
 const DEFAULT_MEDIA_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -298,61 +310,82 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
    * system prompt stays identical across requests and the prompt cache stays valid.
    */
   processInputStep({ messageList }: ProcessInputStepArgs) {
-    const instructions = this.#options.instructions ?? DEFAULT_RING_INSTRUCTIONS;
+    const instructions = this.#options.instructions ?? buildRingInstructions({ snapshot: this.#snapshotEnabled(), clip: this.#clipOptions() !== undefined });
     if (instructions) {
       messageList.addSystem(instructions, "ring-signals");
     }
     return messageList;
   }
 
+  #snapshotEnabled(): boolean {
+    return this.#options.tools ? this.#options.tools.snapshot === true : true;
+  }
+
+  /**
+   * Resolved clip settings, or `undefined` when the clip tool is disabled.
+   */
+  #clipOptions(): { audio: boolean; durationMs: number } | undefined {
+    const clip = this.#options.tools ? this.#options.tools.clip : true;
+    if (!clip) return undefined;
+    const options = clip === true ? {} : clip;
+    return { audio: options.audio ?? true, durationMs: options.durationMs ?? DEFAULT_CLIP_DURATION_MS };
+  }
+
   getTools() {
-    return {
-      ring_snapshot: createTool({
-        id: "ring_snapshot",
-        description:
-          "Get a still image from a Ring camera for an event. Uses the latest image after the event, or the most recent image before it if there is none.",
-        inputSchema: z.object({
-          deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
-          timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
-        }),
-        outputSchema: z.object({ url: z.string() }),
-        execute: async ({ deviceId, timestamp }) => {
-          const image = await this.#downloadSnapshot(deviceId, timestamp);
-          if (!image) {
-            throw new Error("Ring has no image for this device in the last 24 hours.");
-          }
-          const url = this.#mediaUrl("snapshot", deviceId, timestamp);
-          this.#snapshots.set(url, image.toString("base64"));
-          return { url };
-        },
-        toModelOutput: (output) => {
-          const image = this.#snapshots.get(output.url);
-          this.#snapshots.delete(output.url);
-          return {
-            type: "content",
-            value: [
-              { type: "text", text: `Snapshot: ${output.url}` },
-              ...(image ? [{ type: "image-data" as const, data: image, mediaType: "image/jpeg" }] : [])
-            ]
-          };
-        }
+    const clipOptions = this.#clipOptions();
+    const clipSeconds = Math.round((clipOptions?.durationMs ?? DEFAULT_CLIP_DURATION_MS) / 1000);
+
+    const ringSnapshot = createTool({
+      id: "ring_snapshot",
+      description:
+        "Get a still image from a Ring camera for an event. Uses the latest image after the event, or the most recent image before it if there is none.",
+      inputSchema: z.object({
+        deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
+        timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
       }),
-      ring_clip: createTool({
-        id: "ring_clip",
-        description: "Get a link to a 15 second Ring video clip starting at an event. Waits up to 2 minutes for Ring to process it.",
-        inputSchema: z.object({
-          deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
-          timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
-        }),
-        outputSchema: z.object({ url: z.string() }),
-        execute: async ({ deviceId, timestamp }) => {
-          const clip = await this.#downloadClip(deviceId, timestamp);
-          if (!clip) {
-            throw new Error("Ring has no recording for this event.");
-          }
-          return { url: this.#mediaUrl("clip", deviceId, timestamp) };
+      outputSchema: z.object({ url: z.string() }),
+      execute: async ({ deviceId, timestamp }) => {
+        const image = await this.#downloadSnapshot(deviceId, timestamp);
+        if (!image) {
+          throw new Error("Ring has no image for this device in the last 24 hours.");
         }
-      })
+        const url = this.#mediaUrl("snapshot", deviceId, timestamp);
+        this.#snapshots.set(url, image.toString("base64"));
+        return { url };
+      },
+      toModelOutput: (output) => {
+        const image = this.#snapshots.get(output.url);
+        this.#snapshots.delete(output.url);
+        return {
+          type: "content",
+          value: [
+            { type: "text", text: `Snapshot: ${output.url}` },
+            ...(image ? [{ type: "image-data" as const, data: image, mediaType: "image/jpeg" }] : [])
+          ]
+        };
+      }
+    });
+
+    const ringClip = createTool({
+      id: "ring_clip",
+      description: `Get a link to a ${clipSeconds} second Ring video clip starting at an event. Waits up to 2 minutes for Ring to process it.`,
+      inputSchema: z.object({
+        deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
+        timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
+      }),
+      outputSchema: z.object({ url: z.string() }),
+      execute: async ({ deviceId, timestamp }) => {
+        const clip = await this.#downloadClip(deviceId, timestamp);
+        if (!clip) {
+          throw new Error("Ring has no recording for this event.");
+        }
+        return { url: this.#mediaUrl("clip", deviceId, timestamp) };
+      }
+    });
+
+    return {
+      ...(this.#snapshotEnabled() ? { ring_snapshot: ringSnapshot } : {}),
+      ...(clipOptions ? { ring_clip: ringClip } : {})
     };
   }
 
@@ -567,7 +600,8 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     const deadline = Date.now() + CLIP_READY_TIMEOUT_MS;
 
     while (true) {
-      const response = await this.#api.downloadClip(await this.#getAuth(), deviceId, timestamp, CLIP_DURATION_MS);
+      const clipOptions = this.#clipOptions() ?? { audio: true, durationMs: DEFAULT_CLIP_DURATION_MS };
+      const response = await this.#api.downloadClip(await this.#getAuth(), deviceId, timestamp, clipOptions.durationMs, clipOptions.audio);
 
       if (response.ok) {
         return Buffer.from(await response.arrayBuffer());

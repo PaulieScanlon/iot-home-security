@@ -28,6 +28,10 @@ export const homeSecurityAgent = new Agent({
           summary: "Motion was detected at the front door.",
           attributes: (event) => ({ ...event.data.attributes, custom_attribute: "front door" })
         }
+      },
+      tools: {
+        snapshot: true,
+        clip: { audio: true, durationMs: 15_000 }
       }
     })
   ],
