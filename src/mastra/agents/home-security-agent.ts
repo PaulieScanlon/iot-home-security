@@ -32,8 +32,8 @@ export const homeSecurityAgent = new Agent({
         device_online: { priority: "low", summary: "The doorbell came back online.", coalesce: true }
       },
       tools: {
-        snapshot: { inReply: false },
-        clip: { inReply: false, audio: true, durationMs: 15_000 }
+        snapshot: true,
+        clip: { audio: true, durationMs: 15_000, processingTimeoutMs: 120_000 }
       }
     })
   ],

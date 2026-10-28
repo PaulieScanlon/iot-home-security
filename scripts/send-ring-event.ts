@@ -6,8 +6,7 @@ const accountId = process.env.RING_ACCOUNT_ID ?? "ava1.ring.account.example";
 
 const serverUrl = process.env.MASTRA_SERVER_URL ?? "http://localhost:4111";
 
-export const sendRingEvent = async (type: string, idSuffix: string, subType?: string) => {
-  const timestamp = Date.now();
+export const sendRingEvent = async (type: string, idSuffix: string, subType?: string, timestamp = Date.now()) => {
 
   const rawBody = JSON.stringify({
     meta: {

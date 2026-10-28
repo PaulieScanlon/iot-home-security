@@ -18,31 +18,18 @@ const PLATFORM = "ring";
  * Guidance added to the agent's system prompt for Ring notifications, covering only the enabled tools.
  * It depends only on config, so it's the same on every request and doesn't invalidate the prompt cache.
  */
-export const buildRingInstructions = (tools: {
-  snapshot: boolean | { inReply: boolean };
-  clip: boolean | { inReply: boolean };
-}): string => {
-  const snapshotInReply = typeof tools.snapshot === "object" ? tools.snapshot.inReply : true;
-  const clipInReply = typeof tools.clip === "object" ? tools.clip.inReply : true;
+export const buildRingInstructions = (tools: { snapshot: boolean; clip: boolean }): string => {
   const steps = [
-    ...(tools.snapshot
-      ? [
-          snapshotInReply
-            ? "Call ring_snapshot with its deviceId and timestamp, then describe who or what is at the door. Show the snapshot url as a markdown image."
-            : "Call ring_snapshot with its deviceId and timestamp, then describe who or what is at the door. The app shows the image, so don't include its url."
-        ]
-      : []),
-    ...(tools.clip
-      ? [
-          clipInReply
-            ? "Call ring_clip with the same deviceId and timestamp, and link the clip url as [Watch clip](url)."
-            : "Call ring_clip with the same deviceId and timestamp. The app shows the clip, so don't include its url."
-        ]
-      : [])
+    ...(tools.snapshot ? ["Call ring_snapshot with its deviceId and timestamp, then describe who or what is at the door."] : []),
+    ...(tools.clip ? ["Call ring_clip with the same deviceId and timestamp."] : [])
   ];
   const lines = ['Ring events arrive as <notification source="ring"> messages with deviceId and timestamp attributes.'];
   if (steps.length > 0) {
-    lines.push('When a notification has type="button_press":', ...steps.map((step, index) => `${index + 1}. ${step}`));
+    lines.push(
+      'When a notification has type="button_press":',
+      ...steps.map((step, index) => `${index + 1}. ${step}`),
+      "The snapshot and clip are shown to the user from the tool results, so never include their urls in your reply."
+    );
   }
   return lines.join("\n");
 };
@@ -55,7 +42,8 @@ const LINK_WINDOW_MS = 10 * 60 * 1000;
 const SNAPSHOT_WINDOW_MS = 15_000;
 const SNAPSHOT_LOOK_BACK_MS = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
 const DEFAULT_CLIP_DURATION_MS = 15_000;
-const CLIP_READY_TIMEOUT_MS = 120_000;
+const MAX_CLIP_DURATION_MS = 15 * 60 * 1000;
+const DEFAULT_CLIP_PROCESSING_TIMEOUT_MS = 120_000;
 const CLIP_RETRY_MS = 5_000;
 const DEFAULT_MEDIA_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -348,31 +336,27 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   processInputStep({ messageList }: ProcessInputStepArgs) {
     const instructions =
       this.#options.instructions ??
-      buildRingInstructions({ snapshot: this.#snapshotOptions() ?? false, clip: this.#clipOptions() ?? false });
+      buildRingInstructions({ snapshot: this.#snapshotEnabled(), clip: this.#clipOptions() !== undefined });
     if (instructions) {
       messageList.addSystem(instructions, "ring-signals");
     }
     return messageList;
   }
 
-  /**
-   * Resolved snapshot settings, or `undefined` when the snapshot tool is disabled.
-   */
-  #snapshotOptions(): { inReply: boolean } | undefined {
-    const snapshot = this.#options.tools ? this.#options.tools.snapshot : true;
-    if (!snapshot) return undefined;
-    const options = snapshot === true ? {} : snapshot;
-    return { inReply: options.inReply ?? true };
+  #snapshotEnabled(): boolean {
+    return this.#options.tools ? this.#options.tools.snapshot === true : true;
   }
 
   /**
    * Resolved clip settings, or `undefined` when the clip tool is disabled.
    */
-  #clipOptions(): { inReply: boolean; audio: boolean; durationMs: number } | undefined {
+  #clipOptions(): { audio: boolean; durationMs: number; processingTimeoutMs: number } | undefined {
     const clip = this.#options.tools ? this.#options.tools.clip : true;
     if (!clip) return undefined;
     const options = clip === true ? {} : clip;
-    return { inReply: options.inReply ?? true, audio: options.audio ?? true, durationMs: options.durationMs ?? DEFAULT_CLIP_DURATION_MS };
+    return { audio: options.audio ?? true, durationMs: Math.min(options.durationMs ?? DEFAULT_CLIP_DURATION_MS, MAX_CLIP_DURATION_MS),
+      processingTimeoutMs: options.processingTimeoutMs ?? DEFAULT_CLIP_PROCESSING_TIMEOUT_MS
+    };
   }
 
   getTools() {
@@ -405,9 +389,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
           value: [
             {
               type: "text",
-              text: this.#snapshotOptions()?.inReply
-                ? `Show the snapshot by copying this markdown exactly:\n![Snapshot](${output.url})`
-                : "Snapshot fetched. The app shows it to the user, so don't include its url."
+              text: "Snapshot fetched. It's shown to the user from this tool result, so don't include its url."
             },
             ...(image ? [{ type: "image-data" as const, data: image, mediaType: "image/jpeg" }] : [])
           ]
@@ -417,7 +399,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
 
     const ringClip = createTool({
       id: "ring_clip",
-      description: `Get a link to a ${clipSeconds} second Ring video clip starting at an event. Waits up to 2 minutes for Ring to process it.`,
+      description: `Get a link to a ${clipSeconds} second Ring video clip starting at an event. Waits up to ${Math.round((clipOptions?.processingTimeoutMs ?? DEFAULT_CLIP_PROCESSING_TIMEOUT_MS) / 1000)} seconds for Ring to process it.`,
       inputSchema: z.object({
         deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
         timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
@@ -436,9 +418,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
           value: [
             {
               type: "text",
-              text: this.#clipOptions()?.inReply
-                ? `Link the clip by copying this markdown exactly:\n[Watch clip](${output.url})`
-                : "Clip fetched. The app shows it to the user, so don't include its url."
+              text: "Clip fetched. It's shown to the user from this tool result, so don't include its url."
             }
           ]
         };
@@ -446,7 +426,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     });
 
     return {
-      ...(this.#snapshotOptions() ? { ring_snapshot: ringSnapshot } : {}),
+      ...(this.#snapshotEnabled() ? { ring_snapshot: ringSnapshot } : {}),
       ...(clipOptions ? { ring_clip: ringClip } : {})
     };
   }
@@ -659,10 +639,10 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   }
 
   async #downloadClip(deviceId: string, timestamp: number): Promise<Buffer | undefined> {
-    const deadline = Date.now() + CLIP_READY_TIMEOUT_MS;
+    const clipOptions = this.#clipOptions() ?? { audio: true, durationMs: DEFAULT_CLIP_DURATION_MS, processingTimeoutMs: DEFAULT_CLIP_PROCESSING_TIMEOUT_MS };
+    const deadline = Date.now() + clipOptions.processingTimeoutMs;
 
     while (true) {
-      const clipOptions = this.#clipOptions() ?? { inReply: true, audio: true, durationMs: DEFAULT_CLIP_DURATION_MS };
       const response = await this.#api.downloadClip(await this.#getAuth(), deviceId, timestamp, clipOptions.durationMs, clipOptions.audio);
 
       if (response.ok) {

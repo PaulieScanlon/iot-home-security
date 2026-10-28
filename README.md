@@ -69,7 +69,7 @@ npx tsx scripts/device-online.ts
 npx tsx scripts/device-offline.ts              # sends 5, the 5th wakes the agent
 ```
 
-Set `RING_DEVICE_ID` in `.env` to your device's ID so the snapshot and clip tools can fetch media. Test timestamps have no recording behind them, so clips only work for real doorbell presses.
+Set `RING_DEVICE_ID` in `.env` to your device's ID so the snapshot and clip tools can fetch media. Test events use the current time, which has no recording behind it. Set `RING_BUTTON_PRESS_TIMESTAMP` and `RING_MOTION_TIMESTAMP` to the timestamps of real events so the test scripts get a real snapshot and clip.
 
 ## Thread viewer
 
