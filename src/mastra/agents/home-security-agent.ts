@@ -4,8 +4,11 @@ import { RingSignals } from "../../signals/ring";
 // import { RingSignals } from "@mastra/ring-signals";
 import { createiMessageAdapter } from "@photon-ai/chat-adapter-imessage";
 
+const agentId = "home-security-agent";
+const threadId = "ring-alerts";
+
 export const homeSecurityAgent = new Agent({
-  id: "home-security-agent",
+  id: agentId,
   name: "Home Security Agent",
   instructions: `
     You watch over a home using a Ring doorbell.
@@ -13,6 +16,18 @@ export const homeSecurityAgent = new Agent({
     When you're woken by a batch of the same low priority event, summarize it in one line.
   `,
   model: "anthropic/claude-sonnet-5-5",
+  channels: {
+    resolveResourceId: () => agentId,
+    resolveThreadId: () => threadId,
+    adapters: {
+      imessage: {
+        adapter: createiMessageAdapter(),
+        toolDisplay: "text",
+        gateway: false
+      }
+    },
+    threadContext: { maxMessages: 0 }
+  },
   signals: [
     new RingSignals({
       clientId: process.env.RING_CLIENT_ID,
@@ -20,7 +35,7 @@ export const homeSecurityAgent = new Agent({
       hmacKey: process.env.RING_HMAC_KEY,
       baseUrl: process.env.MASTRA_SERVER_URL,
       target: async () => {
-        return { resourceId: "home-security-agent", threadId: "home-security" };
+        return { resourceId: agentId, threadId };
       },
       events: {
         button_press: { priority: "high", summary: "Someone rang the doorbell." },
@@ -38,16 +53,6 @@ export const homeSecurityAgent = new Agent({
       }
     })
   ],
-  channels: {
-    adapters: {
-      imessage: {
-        adapter: createiMessageAdapter(),
-        toolDisplay: "text",
-        gateway: false
-      }
-    },
-    threadContext: { maxMessages: 0 }
-  },
   memory: new Memory({
     options: {
       observationalMemory: true

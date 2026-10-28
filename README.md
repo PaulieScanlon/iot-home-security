@@ -55,7 +55,7 @@ A [Mastra](https://mastra.ai) agent that watches a Ring doorbell. Ring webhooks 
 
 5. In the Developer Console, connect your Ring account to the app. Then sign in at [ring.com](https://ring.com), open the [Ring Appstore](https://ring.com/appstore), and link your private app. The link page shows `Ring account linked` when it's done.
 
-6. Open the `home-security` thread in Studio: `http://localhost:4111/agents/home-security-agent/chat/home-security`.
+6. Open the `ring-alerts` thread in Studio: `http://localhost:4111/agents/home-security-agent/chat/ring-alerts`.
 
 ## Test scripts
 
@@ -71,15 +71,22 @@ npx tsx scripts/device-offline.ts              # sends 5, the 5th wakes the agen
 
 Set `RING_DEVICE_ID` in `.env` to your device's ID so the snapshot and clip tools can fetch media. Test events use the current time, which has no recording behind it. Set `RING_BUTTON_PRESS_TIMESTAMP` and `RING_MOTION_TIMESTAMP` to the timestamps of real events so the test scripts get a real snapshot and clip.
 
+## iMessage alerts
+
+The agent also has an iMessage channel ([Photon](https://app.photon.codes)). Ring events and iMessage share one thread, `ring-alerts`: the channel pins its thread ID with `resolveThreadId`, and `RingSignals` targets the same ID. When a Ring event wakes the agent, its reply is sent to you over iMessage.
+
+1. Set `IMESSAGE_PROJECT_ID`, `IMESSAGE_PROJECT_SECRET` and `IMESSAGE_WEBHOOK_SECRET`. Register `<MASTRA_SERVER_URL>/api/agents/home-security-agent/channels/imessage/webhook` in the Photon dashboard to get the webhook secret.
+2. **Text the agent once before any Ring event arrives.** That first message creates `ring-alerts` with its iMessage details. If a Ring event creates the thread first, it has no iMessage details and your text gets a separate thread.
+
 ## Thread viewer
 
-`src/app` is a small Vite + React app that subscribes to the `home-security` thread with `@mastra/client-js`. It has two views: **Chat** renders messages, notifications, tool calls and snapshots, and **Raw** shows every chunk the subscription receives.
+`src/app` is a small Vite + React app that subscribes to the `ring-alerts` thread with `@mastra/client-js`. It has two views: **Chat** renders messages, notifications, tool calls and snapshots, and **Raw** shows every chunk the subscription receives.
 
 ```bash title="Terminal"
 npm run app
 ```
 
-It connects to `VITE_MASTRA_URL` (default `http://localhost:4111`). Point it at the deployed server to see live runs.
+It connects to `VITE_MASTRA_URL` (default `http://localhost:4111`). Point it at the deployed server to see live runs. To view a different thread, put its ID in the URL: `http://localhost:5173/home-security` or `http://localhost:5173/?thread=home-security`.
 
 ## Deploy
 

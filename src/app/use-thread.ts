@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 
 export const agentId = "home-security-agent";
 export const resourceId = "home-security-agent";
-export const threadId = "home-security";
+const threadFromPath = window.location.pathname.split("/").filter(Boolean).pop();
+
+export const threadId = new URLSearchParams(window.location.search).get("thread") ?? threadFromPath ?? "ring-alerts";
 
 type Chunk = { type: string; runId?: string; payload?: any };
 
