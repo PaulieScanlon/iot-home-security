@@ -30,7 +30,7 @@ export const mastra = new Mastra({
           const agent = context.get("mastra").getAgent("homeSecurityAgent");
 
           const channelThread = await agent.getChannels()?.buildRenderContextForThread(threadId);
-          await channelThread?.chatThread.post(`From the app: ${text}`);
+          await channelThread?.chatThread.post(`💬 App: ${text}`);
 
           await agent.sendMessage({ contents: text, attributes: { sentFrom: "app" } }, { resourceId: agent.id, threadId }).accepted;
 
