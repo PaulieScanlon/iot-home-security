@@ -51,10 +51,10 @@ const CLIP_RETRY_MS = 5_000;
 const DEFAULT_MEDIA_URL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
- * Default notification for each Ring event type. Unlisted events are ignored.
+ * Default notification for each Ring event type. Unlisted events are disabled.
  */
 export const DEFAULT_RING_EVENTS: Partial<Record<RingEventType, RingEventNotification>> = {
-  button_press: { priority: "high", summary: "Someone rang the doorbell." },
+  button_press: { priority: "high", summary: "Doorbell was pressed." },
   motion_detected: { priority: "medium", summary: "Motion was detected." }
 };
 
@@ -358,7 +358,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   }
 
   #snapshotEnabled(): boolean {
-    return this.#options.tools ? Boolean(this.#options.tools.snapshot) : true;
+    return this.#options.tools?.snapshot !== false;
   }
 
   #visibleToModel(tool: "snapshot" | "clip"): boolean {
@@ -439,8 +439,8 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
    * Resolved clip settings, or `undefined` when the clip tool is disabled.
    */
   #clipOptions(): { audio: boolean; durationMs: number; processingTimeoutMs: number } | undefined {
-    const clip = this.#options.tools ? this.#options.tools.clip : true;
-    if (!clip) return undefined;
+    const clip = this.#options.tools?.clip ?? true;
+    if (clip === false) return undefined;
     const options = clip === true ? {} : clip;
     return { audio: options.audio ?? true, durationMs: Math.min(options.durationMs ?? DEFAULT_CLIP_DURATION_MS, MAX_CLIP_DURATION_MS),
       processingTimeoutMs: options.processingTimeoutMs ?? DEFAULT_CLIP_PROCESSING_TIMEOUT_MS
@@ -798,11 +798,12 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
    */
   #mediaUrl(kind: "snapshot" | "clip", deviceId: string, timestamp: number): string | undefined {
     this.#assertConfigured();
-    if (!this.#options.baseUrl) return undefined;
+    const baseUrl = this.#options.baseUrl ?? process.env.RING_BASE_URL;
+    if (!baseUrl) return undefined;
     const path = `${kind}/${deviceId}/${timestamp}`;
     const expires = Date.now() + (this.#options.mediaUrlTtlMs ?? DEFAULT_MEDIA_URL_TTL_MS);
     const signature = signMediaPath(this.#mediaKey, path, expires);
-    return `${this.#options.baseUrl.replace(/\/$/, "")}${this.#routePrefix}/media/${path}?expires=${expires}&signature=${signature}`;
+    return `${baseUrl.replace(/\/$/, "")}${this.#routePrefix}/media/${path}?expires=${expires}&signature=${signature}`;
   }
 
 

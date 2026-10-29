@@ -30,26 +30,22 @@ export const homeSecurityAgent = new Agent({
   },
   signals: [
     new RingSignals({
-      clientId: process.env.RING_CLIENT_ID,
-      clientSecret: process.env.RING_CLIENT_SECRET,
-      hmacKey: process.env.RING_HMAC_KEY,
       baseUrl: process.env.MASTRA_SERVER_URL,
       target: async () => {
         return { resourceId: agentId, threadId };
       },
       events: {
-        button_press: { priority: "high", summary: "Someone rang the doorbell." },
+        button_press: { priority: "high", summary: "Doorbell was pressed." },
         motion_detected: {
           priority: "medium",
           summary: "Motion was detected at the front door.",
           attributes: (event) => ({ ...event.data.attributes, custom_attribute: "front door" })
         },
-        device_offline: { priority: "low", summary: "The doorbell went offline.", coalesce: true },
-        device_online: { priority: "low", summary: "The doorbell came back online.", coalesce: true }
+        device_offline: { priority: "low", summary: "Device went offline.", coalesce: true },
+        device_online: { priority: "low", summary: "Device came online.", coalesce: true }
       },
       tools: {
-        snapshot: { attachment: ["imessage"], visibleToModel: true },
-        clip: { attachment: ["imessage"], visibleToModel: true, audio: true, durationMs: 15_000, processingTimeoutMs: 120_000 }
+        clip: { visibleToModel: true }
       }
     })
   ],

@@ -47,7 +47,7 @@ export type RingWebhookEvent = {
 };
 
 /**
- * How a Ring event becomes a notification signal. Set an event to `false` to ignore it.
+ * How a Ring event becomes a notification signal. Set an event to `false` to disable it.
  */
 export type RingEventNotification = {
   priority: NotificationPriority;
@@ -82,7 +82,7 @@ export type RingSignalsOptions = {
   /**
    * Public URL of your Mastra server, used to build shareable snapshot and clip links. Use `http://localhost:4111`
    * (or a tunnel URL) in development and your deployed URL in production. Without it, the tools return no links;
-   * the agent still sees snapshots and chat channels still get attachments.
+   * the agent still sees snapshots and chat channels still get attachments. Defaults to `RING_BASE_URL`.
    */
   baseUrl?: string;
   /** How long signed snapshot and clip links stay valid, in milliseconds. Defaults to 7 days. */
@@ -101,7 +101,7 @@ export type RingSignalsOptions = {
    * Defaults to `{ resourceId: <agent id>, threadId: <device id> }`.
    */
   target?: SignalProviderTarget | RingTargetResolver;
-  /** Override how each event type becomes a notification, or set it to `false` to ignore it. */
+  /** Override how each event type becomes a notification, or set it to `false` to disable it. */
   events?: Partial<Record<RingEventType, RingEventNotification | false>>;
   /**
    * Guidance added to the agent's system prompt telling it how to handle Ring notifications.
@@ -110,8 +110,8 @@ export type RingSignalsOptions = {
    */
   instructions?: string | false;
   /**
-   * Tools added to the agent. Defaults to both tools enabled.
-   * When set, only the tools listed here are added.
+   * Tools added to the agent. Both tools are enabled by default. Set a tool to `false` to remove it,
+   * or to an options object to configure it.
    */
   tools?: RingToolsOptions;
 };
@@ -155,9 +155,9 @@ export type RingClipToolOptions = {
 };
 
 export type RingToolsOptions = {
-  /** `ring_snapshot`: a still image for an event. */
+  /** `ring_snapshot`: a still image for an event. Defaults to `true`. */
   snapshot?: boolean | RingSnapshotToolOptions;
-  /** `ring_clip`: a video clip for an event. */
+  /** `ring_clip`: a video clip for an event. Defaults to `true`. */
   clip?: boolean | RingClipToolOptions;
 };
 
