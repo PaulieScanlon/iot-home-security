@@ -80,8 +80,9 @@ export type RingSignalsOptions = {
   /** Key used to encrypt stored Ring tokens. Defaults to `MASTRA_ENCRYPTION_KEY`. When unset, tokens are stored unencrypted and a warning is logged. */
   encryptionKey?: string;
   /**
-   * Public base URL of the Mastra server, used to build media links.
-   * Defaults to `MASTRA_SERVER_URL`, then the Mastra server's host and port.
+   * Public URL of your Mastra server, used to build shareable snapshot and clip links. Use `http://localhost:4111`
+   * (or a tunnel URL) in development and your deployed URL in production. Without it, the tools return no links;
+   * the agent still sees snapshots and chat channels still get attachments.
    */
   baseUrl?: string;
   /** How long signed snapshot and clip links stay valid, in milliseconds. Defaults to 7 days. */
@@ -134,6 +135,8 @@ export type RingSnapshotToolOptions = {
   attachment?: RingAttachmentOption;
   /** Largest snapshot to attach, in bytes. Defaults to 10 MB. */
   maxAttachmentBytes?: RingMaxAttachmentBytesOption;
+  /** Pass the image to the model so the agent can describe it. Requires a model that accepts images. Defaults to `true`. */
+  visibleToModel?: boolean;
 };
 
 export type RingClipToolOptions = {
@@ -141,6 +144,8 @@ export type RingClipToolOptions = {
   attachment?: RingAttachmentOption;
   /** Largest clip to attach, in bytes. Defaults to 10 MB. */
   maxAttachmentBytes?: RingMaxAttachmentBytesOption;
+  /** Pass the video to the model so the agent can describe it. Requires a model that accepts video, such as Gemini. Defaults to `false`. */
+  visibleToModel?: boolean;
   /** Include audio in clips. Defaults to `true`. */
   audio?: boolean;
   /** Clip length in milliseconds. Defaults to 15 seconds. Capped at Ring's maximum of 15 minutes (900,000 ms). */
@@ -152,7 +157,7 @@ export type RingClipToolOptions = {
 export type RingToolsOptions = {
   /** `ring_snapshot`: a still image for an event. */
   snapshot?: boolean | RingSnapshotToolOptions;
-  /** `ring_clip`: a link to a video clip for an event. */
+  /** `ring_clip`: a video clip for an event. */
   clip?: boolean | RingClipToolOptions;
 };
 

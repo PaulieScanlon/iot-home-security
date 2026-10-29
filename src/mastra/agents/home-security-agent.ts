@@ -15,7 +15,7 @@ export const homeSecurityAgent = new Agent({
     When someone rings the doorbell, mention any motion notifications that came before it, and say briefly whether it needs attention.
     When you're woken by a batch of the same low priority event, summarize it in one line.
   `,
-  model: "anthropic/claude-sonnet-5-5",
+  model: "google/gemini-3.8-flash",
   channels: {
     resolveResourceId: () => agentId,
     resolveThreadId: () => threadId,
@@ -48,8 +48,8 @@ export const homeSecurityAgent = new Agent({
         device_online: { priority: "low", summary: "The doorbell came back online.", coalesce: true }
       },
       tools: {
-        snapshot: { attachment: ["imessage"] },
-        clip: { attachment: ["imessage"], audio: true, durationMs: 15_000, processingTimeoutMs: 120_000 }
+        snapshot: { attachment: ["imessage"], visibleToModel: true },
+        clip: { attachment: ["imessage"], visibleToModel: true, audio: true, durationMs: 15_000, processingTimeoutMs: 120_000 }
       }
     })
   ],

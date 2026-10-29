@@ -67,7 +67,8 @@ const primitiveAttributes = (attributes: Record<string, unknown> = {}): Notifica
 };
 
 const mediaOutputSchema = z.object({
-  url: z.string(),
+  mediaId: z.string(),
+  url: z.string().optional(),
   attached: z.boolean(),
   shareLink: z.boolean()
 });
@@ -103,6 +104,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   readonly #routePrefix: string;
   readonly #events: Partial<Record<RingEventType, RingEventNotification | false>>;
   readonly #snapshots = new Map<string, string>();
+  readonly #clips = new Map<string, string>();
   readonly #mediaCache = new Map<string, { data: Promise<Buffer | undefined>; expiresAt: number }>();
   #warnedPlaintext = false;
   readonly #refreshes = new Map<string, Promise<RingAccount>>();
@@ -359,6 +361,12 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     return this.#options.tools ? Boolean(this.#options.tools.snapshot) : true;
   }
 
+  #visibleToModel(tool: "snapshot" | "clip"): boolean {
+    const configured = this.#options.tools?.[tool];
+    const visibleToModel = typeof configured === "object" ? configured.visibleToModel : undefined;
+    return visibleToModel ?? tool === "snapshot";
+  }
+
   /**
    * Whether to attach media of this size for this tool call. Function options are given the platform
    * stored on the thread by its channel, so they work for runs woken by a Ring signal too.
@@ -386,14 +394,17 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
    * What the model is told about a media tool result. On a channel thread the user can't see tool results,
    * so media that wasn't attached has to be shared as a link.
    */
-  #mediaModelText(label: "snapshot" | "clip", output: { url: string; attached: boolean; shareLink: boolean }): string {
+  #mediaModelText(label: "snapshot" | "clip", output: { url?: string; attached: boolean; shareLink: boolean }): string {
+    if (output.attached) {
+      return `The ${label} was sent to the user as an attachment, so don't include its url.`;
+    }
+    if (!output.url) {
+      return `The ${label} was fetched, but there's no link to share with the user.`;
+    }
     if (output.shareLink) {
       return label === "clip"
         ? `This chat can't show tool results, so share the clip as a link in your reply: [Watch clip](${output.url})`
         : `This chat can't show tool results, so share the snapshot as a link in your reply: [View snapshot](${output.url})`;
-    }
-    if (output.attached) {
-      return `The ${label} was sent to the user as an attachment, so don't include its url.`;
     }
     return `The ${label} is shown to the user from this tool result, so don't include its url.`;
   }
@@ -459,12 +470,15 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
           await this.#attachFile(context?.writer, image, "image/jpeg", `snapshot-${timestamp}.jpg`);
         }
         const url = this.#mediaUrl("snapshot", deviceId, timestamp);
-        this.#snapshots.set(url, image.toString("base64"));
-        return { url, attached, shareLink: platform !== undefined && !attached };
+        const mediaId = `snapshot:${deviceId}:${timestamp}`;
+        if (this.#visibleToModel("snapshot")) {
+          this.#snapshots.set(mediaId, image.toString("base64"));
+        }
+        return { mediaId, url, attached, shareLink: platform !== undefined && !attached && url !== undefined };
       },
       toModelOutput: (output) => {
-        const image = this.#snapshots.get(output.url);
-        this.#snapshots.delete(output.url);
+        const image = this.#snapshots.get(output.mediaId);
+        this.#snapshots.delete(output.mediaId);
         return {
           type: "content",
           value: [
@@ -480,7 +494,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
 
     const ringClip = createTool({
       id: "ring_clip",
-      description: `Get a link to a ${clipSeconds} second Ring video clip starting at an event. Waits up to ${Math.round((clipOptions?.processingTimeoutMs ?? DEFAULT_CLIP_PROCESSING_TIMEOUT_MS) / 1000)} seconds for Ring to process it.`,
+      description: `Get a ${clipSeconds} second Ring video clip starting at an event. Waits up to ${Math.round((clipOptions?.processingTimeoutMs ?? DEFAULT_CLIP_PROCESSING_TIMEOUT_MS) / 1000)} seconds for Ring to process it.`,
       inputSchema: z.object({
         deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
         timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
@@ -495,16 +509,24 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
         if (attached) {
           await this.#attachFile(context?.writer, clip, "video/mp4", `clip-${timestamp}.mp4`);
         }
-        return { url: this.#mediaUrl("clip", deviceId, timestamp), attached, shareLink: platform !== undefined && !attached };
+        const url = this.#mediaUrl("clip", deviceId, timestamp);
+        const mediaId = `clip:${deviceId}:${timestamp}`;
+        if (this.#visibleToModel("clip")) {
+          this.#clips.set(mediaId, clip.toString("base64"));
+        }
+        return { mediaId, url, attached, shareLink: platform !== undefined && !attached && url !== undefined };
       },
       toModelOutput: (output) => {
+        const video = this.#clips.get(output.mediaId);
+        this.#clips.delete(output.mediaId);
         return {
           type: "content",
           value: [
             {
               type: "text",
               text: this.#mediaModelText("clip", output)
-            }
+            },
+            ...(video ? [{ type: "file-data" as const, data: video, mediaType: "video/mp4" }] : [])
           ]
         };
       }
@@ -770,32 +792,19 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
 
   // ── Media ───────────────────────────────────────────────────────────
 
-  #mediaUrl(kind: "snapshot" | "clip", deviceId: string, timestamp: number): string {
+  /**
+   * A signed link to the media route, or `undefined` when `baseUrl` isn't set. Ring media needs the account's
+   * tokens to download, so links point at this server, which fetches the media from Ring when opened.
+   */
+  #mediaUrl(kind: "snapshot" | "clip", deviceId: string, timestamp: number): string | undefined {
     this.#assertConfigured();
+    if (!this.#options.baseUrl) return undefined;
     const path = `${kind}/${deviceId}/${timestamp}`;
     const expires = Date.now() + (this.#options.mediaUrlTtlMs ?? DEFAULT_MEDIA_URL_TTL_MS);
     const signature = signMediaPath(this.#mediaKey, path, expires);
-    return `${this.#getBaseUrl()}${this.#routePrefix}/media/${path}?expires=${expires}&signature=${signature}`;
+    return `${this.#options.baseUrl.replace(/\/$/, "")}${this.#routePrefix}/media/${path}?expires=${expires}&signature=${signature}`;
   }
 
-  /**
-   * Public URL of the Mastra server: the `baseUrl` option, then `MASTRA_SERVER_URL`
-   * (set by deployment platforms), then the Mastra server config.
-   */
-  #getBaseUrl(): string {
-    if (this.#options.baseUrl) return this.#options.baseUrl.replace(/\/$/, "");
-
-    const server = this.mastra?.getServer();
-    const hasPublicOverride = server?.studioHost != null || server?.studioPort != null || server?.studioProtocol != null;
-    const envUrl = process.env.MASTRA_SERVER_URL?.trim();
-    if (!hasPublicOverride && envUrl) return envUrl.replace(/\/$/, "");
-
-    const protocol = server?.studioProtocol ?? "http";
-    const host = server?.studioHost ?? server?.host ?? process.env.MASTRA_HOST ?? "localhost";
-    const port = server?.studioPort ?? server?.port ?? (Number(process.env.PORT) || 4111);
-    const includePort = !((protocol === "https" && port === 443) || (protocol === "http" && port === 80));
-    return includePort ? `${protocol}://${host}:${port}` : `${protocol}://${host}`;
-  }
 
   /**
    * Media is cached briefly so a tool call and the link it returns share one download, and so every

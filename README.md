@@ -53,7 +53,7 @@ A [Mastra](https://mastra.ai) agent that watches a Ring doorbell. Ring webhooks 
    npm run dev
    ```
 
-5. In the Developer Console, connect your Ring account to the app. Then sign in at [ring.com](https://ring.com), open the [Ring Appstore](https://ring.com/appstore), and link your private app. The link page shows `Ring account linked` when it's done.
+5. In the Developer Console, connect your Ring account to the app. Then sign in to your Ring account on the web, open your app's page in the Ring Appstore (`https://ring.com/appstore/<your-app>`), and link it. Linked apps are listed under [Integrations](https://account.ring.com/account/integrations). The link page shows `Ring account linked` when it's done.
 
 6. Open the `ring-alerts` thread in Studio: `http://localhost:4111/agents/home-security-agent/chat/ring-alerts`.
 
@@ -94,4 +94,4 @@ It connects to `VITE_MASTRA_URL` (default `http://localhost:4111`). Point it at 
 npx mastra deploy
 ```
 
-After deploying, set `MASTRA_SERVER_URL` to the deployed URL in the deployment's environment variables, point the Ring account linking URLs at it, and link the app again from the Ring Appstore.
+After deploying, set `MASTRA_SERVER_URL` to the deployed URL in the deployment's environment variables, point the Ring account linking URLs at it, and link the app again from [Integrations](https://account.ring.com/account/integrations) in your Ring account.
