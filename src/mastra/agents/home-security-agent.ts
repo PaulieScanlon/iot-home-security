@@ -22,7 +22,7 @@ export const homeSecurityAgent = new Agent({
     adapters: {
       imessage: {
         adapter: createiMessageAdapter(),
-        toolDisplay: "text",
+        toolDisplay: "hidden",
         gateway: false
       }
     },
@@ -48,8 +48,8 @@ export const homeSecurityAgent = new Agent({
         device_online: { priority: "low", summary: "The doorbell came back online.", coalesce: true }
       },
       tools: {
-        snapshot: true,
-        clip: { audio: true, durationMs: 15_000, processingTimeoutMs: 120_000 }
+        snapshot: { attachment: ["imessage"] },
+        clip: { attachment: ["imessage"], audio: true, durationMs: 15_000, processingTimeoutMs: 120_000 }
       }
     })
   ],

@@ -28,7 +28,7 @@ export const buildRingInstructions = (tools: { snapshot: boolean; clip: boolean 
     lines.push(
       'When a notification has type="button_press":',
       ...steps.map((step, index) => `${index + 1}. ${step}`),
-      "The snapshot and clip are shown to the user from the tool results, so never include their urls in your reply."
+      "Don't include snapshot or clip urls in your reply unless a tool result asks you to share one."
     );
   }
   return lines.join("\n");
@@ -42,6 +42,7 @@ const LINK_WINDOW_MS = 10 * 60 * 1000;
 const SNAPSHOT_WINDOW_MS = 15_000;
 const SNAPSHOT_LOOK_BACK_MS = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
 const DEFAULT_CLIP_DURATION_MS = 15_000;
+const DEFAULT_MAX_ATTACHMENT_BYTES = 10_000_000;
 const MAX_CLIP_DURATION_MS = 15 * 60 * 1000;
 const DEFAULT_CLIP_PROCESSING_TIMEOUT_MS = 120_000;
 const CLIP_RETRY_MS = 5_000;
@@ -62,6 +63,12 @@ const primitiveAttributes = (attributes: Record<string, unknown> = {}): Notifica
     ),
   ) as NotificationSignalAttributes;
 };
+
+const mediaOutputSchema = z.object({
+  url: z.string(),
+  attached: z.boolean(),
+  shareLink: z.boolean()
+});
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -95,6 +102,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   readonly #events: Partial<Record<RingEventType, RingEventNotification | false>>;
   readonly #snapshots = new Map<string, string>();
   #warnedPlaintext = false;
+  readonly #refreshes = new Map<string, Promise<RingAccount>>();
 
   constructor(options: RingSignalsOptions = {}) {
     super();
@@ -172,6 +180,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     }
 
     const event = JSON.parse(rawBody) as RingWebhookEvent;
+    await this.#handleAccountEvent(event);
     const notification = this.#events[event.data.type as RingEventType];
 
     if (!notification) {
@@ -344,7 +353,72 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   }
 
   #snapshotEnabled(): boolean {
-    return this.#options.tools ? this.#options.tools.snapshot === true : true;
+    return this.#options.tools ? Boolean(this.#options.tools.snapshot) : true;
+  }
+
+  /**
+   * Whether to attach media of this size for this tool call. Function options are given the platform
+   * stored on the thread by its channel, so they work for runs woken by a Ring signal too.
+   */
+  async #shouldAttach(tool: "snapshot" | "clip", threadId: string | undefined, size: number): Promise<{ attached: boolean; platform: string | undefined }> {
+    const configured = this.#options.tools?.[tool];
+    const options = typeof configured === "object" ? configured : {};
+    const platform = await this.#threadPlatform(threadId);
+
+    const attachment = options.attachment ?? true;
+    const attach = platform !== undefined && (Array.isArray(attachment) ? attachment.includes(platform) : attachment);
+    if (!attach) return { attached: false, platform };
+
+    const maxBytes =
+      (typeof options.maxAttachmentBytes === "object" ? options.maxAttachmentBytes[platform] : options.maxAttachmentBytes) ??
+      DEFAULT_MAX_ATTACHMENT_BYTES;
+    if (size > maxBytes) {
+      this.mastra?.getLogger()?.info(`[Ring] Not attaching ${tool} (${size} bytes) on ${platform ?? "this thread"}: over the ${maxBytes} byte limit.`);
+      return { attached: false, platform };
+    }
+    return { attached: true, platform };
+  }
+
+  /**
+   * What the model is told about a media tool result. On a channel thread the user can't see tool results,
+   * so media that wasn't attached has to be shared as a link.
+   */
+  #mediaModelText(label: "snapshot" | "clip", output: { url: string; attached: boolean; shareLink: boolean }): string {
+    if (output.shareLink) {
+      return label === "clip"
+        ? `This chat can't show tool results, so share the clip as a link in your reply: [Watch clip](${output.url})`
+        : `This chat can't show tool results, so share the snapshot as a link in your reply: [View snapshot](${output.url})`;
+    }
+    if (output.attached) {
+      return `The ${label} was sent to the user as an attachment, so don't include its url.`;
+    }
+    return `The ${label} is shown to the user from this tool result, so don't include its url.`;
+  }
+
+  async #threadPlatform(threadId: string | undefined): Promise<string | undefined> {
+    if (!threadId) return undefined;
+    const memory = await this.mastra?.getStorage()?.getStore("memory");
+    const thread = await memory?.getThreadById({ threadId });
+    const platform = thread?.metadata?.channel_platform;
+    return typeof platform === "string" ? platform : undefined;
+  }
+
+  /**
+   * Writes the media as a `file` chunk. Mastra's channel layer posts `file` chunks as attachments
+   * on every channel platform; other surfaces can ignore them.
+   */
+  async #attachFile(
+    writer: { custom: (chunk: any) => Promise<void> } | undefined,
+    data: Buffer,
+    mimeType: string,
+    filename: string
+  ): Promise<void> {
+    await writer?.custom({
+      type: "file",
+      runId: this.id,
+      from: "AGENT",
+      payload: { data: data.toString("base64"), mimeType, filename }
+    });
   }
 
   /**
@@ -371,15 +445,19 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
         deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
         timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
       }),
-      outputSchema: z.object({ url: z.string() }),
-      execute: async ({ deviceId, timestamp }) => {
+      outputSchema: mediaOutputSchema,
+      execute: async ({ deviceId, timestamp }, context) => {
         const image = await this.#downloadSnapshot(deviceId, timestamp);
         if (!image) {
           throw new Error("Ring has no image for this device in the last 24 hours.");
         }
+        const { attached, platform } = await this.#shouldAttach("snapshot", context?.agent?.threadId, image.length);
+        if (attached) {
+          await this.#attachFile(context?.writer, image, "image/jpeg", `snapshot-${timestamp}.jpg`);
+        }
         const url = this.#mediaUrl("snapshot", deviceId, timestamp);
         this.#snapshots.set(url, image.toString("base64"));
-        return { url };
+        return { url, attached, shareLink: platform !== undefined && !attached };
       },
       toModelOutput: (output) => {
         const image = this.#snapshots.get(output.url);
@@ -389,7 +467,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
           value: [
             {
               type: "text",
-              text: "Snapshot fetched. It's shown to the user from this tool result, so don't include its url."
+              text: this.#mediaModelText("snapshot", output)
             },
             ...(image ? [{ type: "image-data" as const, data: image, mediaType: "image/jpeg" }] : [])
           ]
@@ -404,13 +482,17 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
         deviceId: z.string().describe("The deviceId attribute from the Ring notification"),
         timestamp: z.number().describe("The timestamp attribute from the Ring notification, in epoch milliseconds")
       }),
-      outputSchema: z.object({ url: z.string() }),
-      execute: async ({ deviceId, timestamp }) => {
+      outputSchema: mediaOutputSchema,
+      execute: async ({ deviceId, timestamp }, context) => {
         const clip = await this.#downloadClip(deviceId, timestamp);
         if (!clip) {
           throw new Error("Ring has no recording for this event.");
         }
-        return { url: this.#mediaUrl("clip", deviceId, timestamp) };
+        const { attached, platform } = await this.#shouldAttach("clip", context?.agent?.threadId, clip.length);
+        if (attached) {
+          await this.#attachFile(context?.writer, clip, "video/mp4", `clip-${timestamp}.mp4`);
+        }
+        return { url: this.#mediaUrl("clip", deviceId, timestamp), attached, shareLink: platform !== undefined && !attached };
       },
       toModelOutput: (output) => {
         return {
@@ -418,7 +500,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
           value: [
             {
               type: "text",
-              text: "Clip fetched. It's shown to the user from this tool result, so don't include its url."
+              text: this.#mediaModelText("clip", output)
             }
           ]
         };
@@ -454,29 +536,55 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     const tokens = await this.#api.exchangeCode(code);
     const hardwareId = this.#options.hardwareId ?? crypto.randomUUID();
     const accountId = await this.#api.getAccountId({ accessToken: tokens.accessToken, hardwareId });
-    await this.#saveAccount({ accountId, hardwareId, ...tokens }, "pending");
+    await this.#saveAccount({ accountId, hardwareId, deviceIds: [], ...tokens }, "pending");
   }
 
   /**
    * Returns a failure reason, or `undefined` when the link completed.
-   * The account saved by the token exchange only replaces the linked account once the nonce checks out.
+   * A pending account only becomes active once its nonce checks out, so a new token exchange
+   * never overwrites a working link.
    */
-
   async #completeLink(nonce: string, time: string): Promise<string | undefined> {
     this.#assertConfigured();
     if (!nonce || !time) return "missing nonce or time";
     if (Date.now() - Number(time) > LINK_WINDOW_MS) return "link request expired";
 
-    const pending = await this.#loadInstallation("pending");
-    if (!pending) return "no account saved by the token exchange";
+    const pending = (await this.#listInstallations("pending")).map((installation) => this.#readAccount(installation));
+    if (pending.length === 0) return "no account saved by the token exchange";
 
-    const account = this.#readAccount(pending);
-    if (!safeEqual(computeLinkNonce(this.#hmacKey, time, account.accountId), nonce)) return "nonce mismatch";
+    const account = pending.find((candidate) => safeEqual(computeLinkNonce(this.#hmacKey, time, candidate.accountId), nonce));
+    if (!account) return "nonce mismatch";
 
     await this.#api.confirmLink(account, nonce, account.accountId);
-    await this.#saveAccount(account, "active");
-    await (await this.#channelsStorage()).deleteInstallation(this.#installationId("pending"));
+    const deviceIds = await this.#api.listDeviceIds(account).catch(() => []);
+    await this.#saveAccount({ ...account, deviceIds }, "active");
+    await (await this.#channelsStorage()).deleteInstallation(this.#installationId(account.accountId, "pending"));
     return undefined;
+  }
+
+  /**
+   * Keeps stored accounts in sync with Ring: removes an account's tokens when the app is unlinked,
+   * and records which account each device belongs to.
+   */
+  async #handleAccountEvent(event: RingWebhookEvent): Promise<void> {
+    const accountId = event.meta.account_id;
+    if (!accountId) return;
+
+    if (event.data.type === "app_integration_removed") {
+      await this.#deleteAccount(accountId);
+      this.mastra?.getLogger()?.info(`[Ring] Ring account unlinked; removed its stored tokens.`);
+      return;
+    }
+
+    if (event.data.type === "subscription_deactivated") {
+      this.mastra?.getLogger()?.warn("[Ring] The Ring subscription was deactivated. Snapshots and clips won't be available.");
+      return;
+    }
+
+    const deviceId = event.data.attributes.source;
+    if (event.data.attributes.source_type === "devices" && deviceId) {
+      await this.#rememberDevice(accountId, deviceId);
+    }
   }
 
   #assertConfigured(): void {
@@ -493,11 +601,11 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   // ── Token storage ───────────────────────────────────────────────────
 
   /**
-   * The linked account and the account waiting for `/link` to confirm it are stored separately,
-   * so a new token exchange never overwrites a working link.
+   * One record per linked Ring account, so several accounts can be linked to the same agent.
+   * The account waiting for `/link` to confirm it is stored separately until then.
    */
-  #installationId(status: "active" | "pending"): string {
-    const id = `${PLATFORM}:${this.agent?.id ?? "default"}`;
+  #installationId(accountId: string, status: "active" | "pending"): string {
+    const id = `${PLATFORM}:${this.agent?.id ?? "default"}:${accountId}`;
     return status === "pending" ? `${id}:pending` : id;
   }
 
@@ -510,14 +618,15 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     return channels;
   }
 
-  async #loadInstallation(status: "active" | "pending"): Promise<ChannelInstallation | null> {
+  async #listInstallations(status: "active" | "pending"): Promise<ChannelInstallation[]> {
     const channels = await this.#channelsStorage();
-    return channels.getInstallation(this.#installationId(status));
+    const agentId = this.agent?.id ?? "default";
+    return (await channels.listInstallations(PLATFORM)).filter((installation) => installation.agentId === agentId && installation.status === status);
   }
 
   async #saveAccount(account: RingAccount, status: "active" | "pending"): Promise<void> {
     const channels = await this.#channelsStorage();
-    const id = this.#installationId(status);
+    const id = this.#installationId(account.accountId, status);
     const existing = await channels.getInstallation(id);
     const now = new Date();
     await channels.saveInstallation({
@@ -528,6 +637,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
       data: {
         accountId: account.accountId,
         hardwareId: account.hardwareId,
+        deviceIds: account.deviceIds,
         accessToken: this.#encrypt(account.accessToken),
         refreshToken: this.#encrypt(account.refreshToken),
         expiresAt: account.expiresAt
@@ -535,6 +645,31 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now
     });
+
+    if (status === "active") {
+      for (const duplicate of await this.#listInstallations("active")) {
+        if (duplicate.id !== id && (duplicate.data as { accountId?: string }).accountId === account.accountId) {
+          await channels.deleteInstallation(duplicate.id);
+        }
+      }
+    }
+  }
+
+  async #deleteAccount(accountId: string): Promise<void> {
+    const channels = await this.#channelsStorage();
+    for (const status of ["active", "pending"] as const) {
+      for (const installation of await this.#listInstallations(status)) {
+        if ((installation.data as { accountId?: string }).accountId === accountId) {
+          await channels.deleteInstallation(installation.id);
+        }
+      }
+    }
+  }
+
+  async #rememberDevice(accountId: string, deviceId: string): Promise<void> {
+    const account = await this.#loadAccount(accountId);
+    if (!account || account.deviceIds.includes(deviceId)) return;
+    await this.#saveAccount({ ...account, deviceIds: [...account.deviceIds, deviceId] }, "active");
   }
 
   #readAccount(installation: ChannelInstallation): RingAccount {
@@ -542,32 +677,70 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     return {
       accountId: data.accountId,
       hardwareId: data.hardwareId,
+      deviceIds: data.deviceIds ?? [],
       accessToken: this.#decrypt(data.accessToken),
       refreshToken: this.#decrypt(data.refreshToken),
       expiresAt: data.expiresAt
     };
   }
 
-  async #loadAccount(): Promise<RingAccount | undefined> {
-    const installation = await this.#loadInstallation("active");
-    if (!installation || installation.status !== "active") return undefined;
-    return this.#readAccount(installation);
+  async #loadAccount(accountId: string): Promise<RingAccount | undefined> {
+    const installation = (await this.#listInstallations("active")).find(
+      (candidate) => (candidate.data as { accountId?: string }).accountId === accountId
+    );
+    return installation ? this.#readAccount(installation) : undefined;
   }
 
-  async #getAuth(): Promise<RingAuth> {
-    const account = await this.#loadAccount();
-    if (!account) {
-      throw new Error("[Ring] No linked Ring account. Link the app from the Ring Appstore first.");
+  /**
+   * The linked account that owns a device. Falls back to the only linked account, so a single-account
+   * setup works before the device has been seen in a webhook.
+   */
+  async #accountForDevice(deviceId: string): Promise<RingAccount> {
+    const accounts = (await this.#listInstallations("active")).map((installation) => this.#readAccount(installation));
+    const owner = accounts.find((account) => account.deviceIds.includes(deviceId)) ?? (accounts.length === 1 ? accounts[0] : undefined);
+    if (!owner) {
+      throw new Error(
+        accounts.length === 0
+          ? "[Ring] No linked Ring account. Link the app from the Ring Appstore first."
+          : "[Ring] Couldn't tell which linked Ring account owns this device."
+      );
     }
+    return owner;
+  }
 
+  /**
+   * Fresh credentials for the account that owns a device. Ring invalidates the old refresh token on every
+   * refresh, so concurrent refreshes in this process share one request, and if another process refreshed
+   * first, the tokens it stored are used instead.
+   */
+  async #getAuth(deviceId: string): Promise<RingAuth> {
+    const account = await this.#accountForDevice(deviceId);
     if (account.expiresAt - Date.now() > 60_000) {
       return account;
     }
 
-    const tokens: RingTokens = await this.#api.refresh(account.refreshToken);
-    const refreshed = { ...account, ...tokens };
-    await this.#saveAccount(refreshed, "active");
-    return refreshed;
+    const inFlight = this.#refreshes.get(account.accountId);
+    if (inFlight) return inFlight;
+
+    const refresh = (async () => {
+      try {
+        const tokens: RingTokens = await this.#api.refresh(account.refreshToken);
+        const refreshed = { ...account, ...tokens };
+        await this.#saveAccount(refreshed, "active");
+        return refreshed;
+      } catch (error) {
+        const stored = await this.#loadAccount(account.accountId);
+        if (stored && stored.refreshToken !== account.refreshToken && stored.expiresAt - Date.now() > 60_000) {
+          return stored;
+        }
+        throw error;
+      } finally {
+        this.#refreshes.delete(account.accountId);
+      }
+    })();
+
+    this.#refreshes.set(account.accountId, refresh);
+    return refresh;
   }
 
   #encryptionKey(): string | undefined {
@@ -626,7 +799,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     const waitMs = endTimestamp - Date.now();
     if (waitMs > 0) await sleep(waitMs);
 
-    const auth = await this.#getAuth();
+    const auth = await this.#getAuth(deviceId);
     const afterEvent = await this.#api.downloadLatestImage(auth, deviceId, timestamp, endTimestamp);
     if (afterEvent) return afterEvent;
 
@@ -643,7 +816,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     const deadline = Date.now() + clipOptions.processingTimeoutMs;
 
     while (true) {
-      const response = await this.#api.downloadClip(await this.#getAuth(), deviceId, timestamp, clipOptions.durationMs, clipOptions.audio);
+      const response = await this.#api.downloadClip(await this.#getAuth(deviceId), deviceId, timestamp, clipOptions.durationMs, clipOptions.audio);
 
       if (response.ok) {
         return Buffer.from(await response.arrayBuffer());

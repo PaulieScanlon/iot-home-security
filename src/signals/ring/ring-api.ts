@@ -59,6 +59,12 @@ export class RingApiClient {
     return body.data.id;
   }
 
+  /** List the IDs of the devices the account has shared with the app. */
+  async listDeviceIds(auth: RingAuth): Promise<string[]> {
+    const body = (await this.#json('GET', '/v1/devices', auth)) as { data?: { id: string }[] };
+    return (body.data ?? []).map(device => device.id);
+  }
+
   /** Verify the link nonce and mark the integration `completed`. */
   async confirmLink(auth: RingAuth, nonce: string, accountIdentifier: string): Promise<void> {
     await this.#json('POST', '/v1/accounts/me/app-integrations', auth, {

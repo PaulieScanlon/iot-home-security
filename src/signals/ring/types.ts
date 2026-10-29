@@ -115,7 +115,32 @@ export type RingSignalsOptions = {
   tools?: RingToolsOptions;
 };
 
+/**
+ * Whether to send the media as a file attachment in chat channels.
+ * `true` attaches on every channel platform, `false` never attaches, and a list of platform names
+ * (for example `["imessage", "slack"]`) attaches only on those. Studio, web and API threads never get attachments.
+ */
+export type RingAttachmentOption = boolean | string[];
+
+/**
+ * Largest file to attach, in bytes. A number applies to every platform; an object sets a limit per platform
+ * (for example `{ discord: 10_000_000 }`), and unlisted platforms use the 10 MB default.
+ * Files over the limit aren't attached, and the agent shares the link instead.
+ */
+export type RingMaxAttachmentBytesOption = number | Record<string, number>;
+
+export type RingSnapshotToolOptions = {
+  /** Send the snapshot as a file attachment in chat channels. Defaults to `true`. The `url` in the tool result is always returned. */
+  attachment?: RingAttachmentOption;
+  /** Largest snapshot to attach, in bytes. Defaults to 10 MB. */
+  maxAttachmentBytes?: RingMaxAttachmentBytesOption;
+};
+
 export type RingClipToolOptions = {
+  /** Send the clip as a file attachment in chat channels. Defaults to `true`. The `url` in the tool result is always returned. */
+  attachment?: RingAttachmentOption;
+  /** Largest clip to attach, in bytes. Defaults to 10 MB. */
+  maxAttachmentBytes?: RingMaxAttachmentBytesOption;
   /** Include audio in clips. Defaults to `true`. */
   audio?: boolean;
   /** Clip length in milliseconds. Defaults to 15 seconds. Capped at Ring's maximum of 15 minutes (900,000 ms). */
@@ -126,7 +151,7 @@ export type RingClipToolOptions = {
 
 export type RingToolsOptions = {
   /** `ring_snapshot`: a still image for an event. */
-  snapshot?: boolean;
+  snapshot?: boolean | RingSnapshotToolOptions;
   /** `ring_clip`: a link to a video clip for an event. */
   clip?: boolean | RingClipToolOptions;
 };
@@ -140,4 +165,6 @@ export type RingTokens = {
 export type RingAccount = RingTokens & {
   accountId: string;
   hardwareId: string;
+  /** Devices seen for this account, used to pick the right account's tokens for a device. */
+  deviceIds: string[];
 };
