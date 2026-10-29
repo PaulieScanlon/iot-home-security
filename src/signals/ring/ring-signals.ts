@@ -43,6 +43,8 @@ const SNAPSHOT_WINDOW_MS = 15_000;
 const SNAPSHOT_LOOK_BACK_MS = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
 const DEFAULT_CLIP_DURATION_MS = 15_000;
 const DEFAULT_MAX_ATTACHMENT_BYTES = 10_000_000;
+const MEDIA_CACHE_TTL_MS = 10 * 60_000;
+const MEDIA_CACHE_MAX_ENTRIES = 20;
 const MAX_CLIP_DURATION_MS = 15 * 60 * 1000;
 const DEFAULT_CLIP_PROCESSING_TIMEOUT_MS = 120_000;
 const CLIP_RETRY_MS = 5_000;
@@ -101,6 +103,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   readonly #routePrefix: string;
   readonly #events: Partial<Record<RingEventType, RingEventNotification | false>>;
   readonly #snapshots = new Map<string, string>();
+  readonly #mediaCache = new Map<string, { data: Promise<Buffer | undefined>; expiresAt: number }>();
   #warnedPlaintext = false;
   readonly #refreshes = new Map<string, Promise<RingAccount>>();
 
@@ -299,7 +302,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
             return context.text("Link expired", 403);
           }
 
-          const media = kind === "clip" ? await this.#downloadClip(deviceId, Number(timestamp)) : await this.#downloadSnapshot(deviceId, Number(timestamp));
+          const media = kind === "clip" ? await this.#getClip(deviceId, Number(timestamp)) : await this.#getSnapshot(deviceId, Number(timestamp));
 
           if (!media) {
             return context.text("Not found", 404);
@@ -447,7 +450,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
       }),
       outputSchema: mediaOutputSchema,
       execute: async ({ deviceId, timestamp }, context) => {
-        const image = await this.#downloadSnapshot(deviceId, timestamp);
+        const image = await this.#getSnapshot(deviceId, timestamp);
         if (!image) {
           throw new Error("Ring has no image for this device in the last 24 hours.");
         }
@@ -484,7 +487,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
       }),
       outputSchema: mediaOutputSchema,
       execute: async ({ deviceId, timestamp }, context) => {
-        const clip = await this.#downloadClip(deviceId, timestamp);
+        const clip = await this.#getClip(deviceId, timestamp);
         if (!clip) {
           throw new Error("Ring has no recording for this event.");
         }
@@ -794,6 +797,41 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     return includePort ? `${protocol}://${host}:${port}` : `${protocol}://${host}`;
   }
 
+  /**
+   * Media is cached briefly so a tool call and the link it returns share one download, and so every
+   * byte-range request a video player makes reads the same file instead of downloading the clip again.
+   */
+  #cachedMedia(key: string, download: () => Promise<Buffer | undefined>): Promise<Buffer | undefined> {
+    const now = Date.now();
+    for (const [cachedKey, entry] of this.#mediaCache) {
+      if (entry.expiresAt <= now) this.#mediaCache.delete(cachedKey);
+    }
+
+    const cached = this.#mediaCache.get(key);
+    if (cached) return cached.data;
+
+    const data = download().then((media) => {
+      if (!media) this.#mediaCache.delete(key);
+      return media;
+    });
+    this.#mediaCache.set(key, { data, expiresAt: now + MEDIA_CACHE_TTL_MS });
+
+    while (this.#mediaCache.size > MEDIA_CACHE_MAX_ENTRIES) {
+      const oldest = this.#mediaCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.#mediaCache.delete(oldest);
+    }
+    return data;
+  }
+
+  #getSnapshot(deviceId: string, timestamp: number): Promise<Buffer | undefined> {
+    return this.#cachedMedia(`snapshot:${deviceId}:${timestamp}`, () => this.#downloadSnapshot(deviceId, timestamp));
+  }
+
+  #getClip(deviceId: string, timestamp: number): Promise<Buffer | undefined> {
+    return this.#cachedMedia(`clip:${deviceId}:${timestamp}`, () => this.#downloadClip(deviceId, timestamp));
+  }
+
   async #downloadSnapshot(deviceId: string, timestamp: number): Promise<Buffer | undefined> {
     const endTimestamp = Math.min(timestamp + SNAPSHOT_WINDOW_MS, Date.now() + SNAPSHOT_WINDOW_MS);
     const waitMs = endTimestamp - Date.now();
@@ -815,15 +853,23 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     const clipOptions = this.#clipOptions() ?? { audio: true, durationMs: DEFAULT_CLIP_DURATION_MS, processingTimeoutMs: DEFAULT_CLIP_PROCESSING_TIMEOUT_MS };
     const deadline = Date.now() + clipOptions.processingTimeoutMs;
 
+    let partial: Buffer | undefined;
+
     while (true) {
       const response = await this.#api.downloadClip(await this.#getAuth(deviceId), deviceId, timestamp, clipOptions.durationMs, clipOptions.audio);
 
-      if (response.ok) {
+      if (response.status === 200) {
         return Buffer.from(await response.arrayBuffer());
       }
 
-      if (![416, 425].includes(response.status) || Date.now() > deadline) {
-        return undefined;
+      if (response.status === 206) {
+        partial = Buffer.from(await response.arrayBuffer());
+      } else if (![416, 425].includes(response.status)) {
+        return partial;
+      }
+
+      if (Date.now() > deadline) {
+        return partial;
       }
 
       await sleep(CLIP_RETRY_MS);
