@@ -8,7 +8,7 @@ A [Mastra](https://mastra.ai) agent that watches a Ring doorbell. Ring webhooks 
   - Registers the routes Ring calls for account linking and webhooks.
   - Verifies webhook signatures and turns each Ring event into a notification signal with its own priority.
   - Stores the linked account's tokens in Mastra storage and refreshes them.
-  - Adds `ring_snapshot` and `ring_clip` tools, plus a fixed system instruction telling the agent to use them on a doorbell press.
+  - Adds `ring_snapshot` and `ring_clip` tools, plus a fixed system instruction telling the agent to use them on a doorbell press. This agent sets `clip: { visibleToModel: true }`, so the model watches the clip as well as the snapshot.
 - The agent (`src/mastra/agents/home-security-agent.ts`) registers it with `signals: [new RingSignals({ ... })]`.
 - Low-priority events are batched. The agent's delivery policy wakes it once five of the same event have piled up.
 
@@ -23,7 +23,7 @@ A [Mastra](https://mastra.ai) agent that watches a Ring doorbell. Ring webhooks 
 - A Ring doorbell on a paid Ring plan with **Person, Package & Vehicle Alerts** turned on.
 - A Ring **Private App** in the [Ring Developer Console](https://developer.amazon.com/ring/console/apps).
 - A libSQL database, such as a [Turso](https://turso.tech) database provisioned on Mastra platform.
-- An Anthropic API key.
+- A Google Gemini API key. The agent uses `google/gemini-3.8-flash`, which can watch video clips.
 
 ## Setup
 
