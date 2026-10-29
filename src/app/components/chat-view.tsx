@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -34,6 +34,9 @@ const TextPart = ({ text }: { text: string }) => {
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
+          img: ({ src }) => {
+            return typeof src === "string" ? <Media kind="image" url={src} /> : null;
+          },
           a: ({ href, children }) => {
             return (
               <a href={href} target="_blank" rel="noreferrer">
@@ -53,16 +56,37 @@ const JsonBlock = ({ value }: { value: unknown }) => {
   return <pre className="mt-2 rounded-lg border border-line bg-panel p-2.5 font-mono text-xs break-all whitespace-pre-wrap">{JSON.stringify(value, null, 2)}</pre>;
 };
 
+const mediaClass = "mb-2 block w-full max-w-[520px] rounded-lg border border-line bg-black";
+
+const MediaUnavailable = ({ label }: { label: string }) => {
+  return (
+    <div className="mb-2 flex aspect-video w-full max-w-[520px] items-center justify-center rounded-lg border border-dashed border-line-strong bg-panel font-mono text-xs tracking-[0.06em] text-muted uppercase">
+      {label}
+    </div>
+  );
+};
+
+const Media = ({ kind, url }: { kind: "image" | "video"; url: string }) => {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return <MediaUnavailable label={kind === "image" ? "Image not available" : "Video not available"} />;
+  }
+  if (kind === "image") {
+    return <img className={mediaClass} src={url} alt="Ring snapshot" onError={() => setFailed(true)} />;
+  }
+  return <video className={mediaClass} src={url} controls preload="metadata" onError={() => setFailed(true)} />;
+};
+
 const ToolPart = ({ part }: { part: Extract<ChatPart, { kind: "tool" }> }) => {
   const url = (part.result as { url?: string } | undefined)?.url;
   const state = part.error ? "failed" : part.result ? "done" : "running";
   const stateColor = state === "done" ? "bg-mastra" : state === "failed" ? "bg-urgent" : "bg-faint";
-  const mediaClass = "mb-2 block w-full max-w-[520px] rounded-lg border border-line bg-black";
 
   return (
     <div className="mt-2.5">
-      {url && part.toolName === "ring_snapshot" ? <img className={mediaClass} src={url} alt="Ring snapshot" /> : null}
-      {url && part.toolName === "ring_clip" ? <video className={mediaClass} src={url} controls preload="metadata" /> : null}
+      {url && part.toolName === "ring_snapshot" ? <Media kind="image" url={url} /> : null}
+      {url && part.toolName === "ring_clip" ? <Media kind="video" url={url} /> : null}
       <details className="font-mono text-xs text-muted">
         <summary className="inline-flex cursor-pointer items-center gap-2">
           <span className={`size-1.5 rounded-full ${stateColor}`} aria-hidden="true" />
