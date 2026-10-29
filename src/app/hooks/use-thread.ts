@@ -1,31 +1,29 @@
-import { MastraClient } from "@mastra/client-js";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { agentId, baseUrl, client, resourceId } from "../lib/mastra-client";
 
-export const agentId = "home-security-agent";
-export const resourceId = "home-security-agent";
-const threadFromPath = window.location.pathname.split("/").filter(Boolean).pop();
-
-export const threadId = new URLSearchParams(window.location.search).get("thread") ?? threadFromPath ?? "ring-alerts";
 
 type Chunk = { type: string; runId?: string; payload?: any };
+
+export type Origin = "app" | "agent" | "channel" | "ring" | "studio";
 
 export type ChatPart =
   | { kind: "text"; text: string }
   | { kind: "tool"; toolCallId: string; toolName: string; args: unknown; result?: unknown; error?: unknown }
   | { kind: "data"; label: string; value: unknown };
 
-export type SignalInfo = {
-  tagName?: string;
+export type RingEventInfo = {
   kind?: string;
   priority?: string;
   status?: string;
+  motionType?: string;
 };
 
 export type ChatEntry = {
   id: string;
-  role: string;
+  origin: Origin;
   createdAt?: string;
-  signal?: SignalInfo;
+  ring?: RingEventInfo;
+  pending?: boolean;
   parts: ChatPart[];
 };
 
@@ -34,47 +32,61 @@ export type RawEntry = {
   chunk: Chunk;
 };
 
-const client = new MastraClient({
-  baseUrl: import.meta.env.VITE_MASTRA_URL ?? "http://localhost:4111",
-  headers: import.meta.env.VITE_MASTRA_TOKEN ? { Authorization: `Bearer ${import.meta.env.VITE_MASTRA_TOKEN}` } : undefined
-});
+const originOf = (message: any): Origin => {
+  if (message.role === "assistant") {
+    return "agent";
+  }
+  if (message.role !== "signal") {
+    return "studio";
+  }
+
+  const signal = message.content?.metadata?.signal;
+  if (signal?.type === "notification") {
+    return "ring";
+  }
+  return signal?.attributes?.sentFrom === "app" ? "app" : "channel";
+};
 
 const historyMessageToEntry = (message: any): ChatEntry => {
-  const parts: ChatPart[] = (message.content?.parts ?? []).map((part: any): ChatPart => {
-    if (part.type === "text") {
-      return { kind: "text", text: part.text };
-    }
-    if (part.type === "tool-invocation") {
-      const invocation = part.toolInvocation;
-      return {
-        kind: "tool",
-        toolCallId: invocation.toolCallId,
-        toolName: invocation.toolName,
-        args: invocation.args,
-        result: invocation.result
-      };
-    }
-    return { kind: "data", label: part.type, value: part };
-  });
+  const parts: ChatPart[] = (message.content?.parts ?? [])
+    .filter((part: any) => part.type !== "step-start" && part.type !== "reasoning")
+    .map((part: any): ChatPart => {
+      if (part.type === "text") {
+        return { kind: "text", text: part.text };
+      }
+      if (part.type === "tool-invocation") {
+        const invocation = part.toolInvocation;
+        return {
+          kind: "tool",
+          toolCallId: invocation.toolCallId,
+          toolName: invocation.toolName,
+          args: invocation.args,
+          result: invocation.result
+        };
+      }
+      return { kind: "data", label: part.type, value: part };
+    });
 
   if (parts.length === 0 && typeof message.content?.content === "string") {
     parts.push({ kind: "text", text: message.content.content });
   }
 
-  const signal = message.content?.metadata?.signal;
+  const origin = originOf(message);
+  const attributes = message.content?.metadata?.signal?.attributes;
 
   return {
     id: message.id,
-    role: message.role,
+    origin,
     createdAt: message.createdAt,
-    signal: signal
-      ? {
-          tagName: signal.tagName,
-          kind: signal.attributes?.kind,
-          priority: signal.attributes?.priority ?? signal.metadata?.notification?.priority,
-          status: signal.attributes?.status
-        }
-      : undefined,
+    ring:
+      origin === "ring"
+        ? {
+            kind: attributes?.kind,
+            priority: attributes?.priority ?? message.content?.metadata?.signal?.metadata?.notification?.priority,
+            status: attributes?.status,
+            motionType: attributes?.motionType
+          }
+        : undefined,
     parts
   };
 };
@@ -82,7 +94,7 @@ const historyMessageToEntry = (message: any): ChatEntry => {
 const applyLiveChunk = (entries: ChatEntry[], chunk: Chunk): ChatEntry[] => {
   const id = `live-${chunk.runId ?? "run"}`;
   const existing = entries.find((entry) => entry.id === id);
-  const entry: ChatEntry = existing ?? { id, role: "assistant", createdAt: new Date().toISOString(), parts: [] };
+  const entry: ChatEntry = existing ?? { id, origin: "agent", createdAt: new Date().toISOString(), parts: [] };
   const parts = [...entry.parts];
 
   if (chunk.type === "text-delta") {
@@ -108,13 +120,16 @@ const applyLiveChunk = (entries: ChatEntry[], chunk: Chunk): ChatEntry[] => {
   return existing ? entries.map((item) => (item.id === id ? updated : item)) : [...entries, updated];
 };
 
-export const useThread = () => {
+export const useThread = (threadId: string) => {
   const [raw, setRaw] = useState<RawEntry[]>([]);
   const [chat, setChat] = useState<ChatEntry[]>([]);
-  const [status, setStatus] = useState("connecting");
+  const [status, setStatus] = useState("Connecting");
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    setRaw([]);
+    setChat([]);
+    setStatus("Connecting");
 
     const subscribe = async () => {
       const subscription = await client.getAgent(agentId).subscribeToThread({
@@ -123,7 +138,7 @@ export const useThread = () => {
         withInitialHistory: { perPage: 100 }
       });
       unsubscribe = subscription.unsubscribe;
-      setStatus("subscribed");
+      setStatus("Live");
 
       await subscription.processDataStream({
         reconnect: true,
@@ -142,13 +157,36 @@ export const useThread = () => {
     };
 
     subscribe().catch((error) => {
-      setStatus(`error: ${error instanceof Error ? error.message : String(error)}`);
+      setStatus(`Can't connect: ${error instanceof Error ? error.message : String(error)}`);
     });
 
     return () => {
       unsubscribe?.();
     };
-  }, []);
+  }, [threadId]);
 
-  return { raw, chat, status };
+  const send = useCallback(
+    async (text: string) => {
+      const id = `app-${Date.now()}`;
+      setChat((previous) => [...previous, { id, origin: "app", createdAt: new Date().toISOString(), pending: true, parts: [{ kind: "text", text }] }]);
+
+      try {
+        const response = await fetch(`${baseUrl}/app/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ threadId, text })
+        });
+        if (!response.ok) {
+          throw new Error(`the server returned ${response.status}`);
+        }
+        setChat((previous) => previous.map((entry) => (entry.id === id ? { ...entry, pending: false } : entry)));
+      } catch (error) {
+        setChat((previous) => previous.filter((entry) => entry.id !== id));
+        throw error;
+      }
+    },
+    [threadId]
+  );
+
+  return { raw, chat, status, send };
 };
