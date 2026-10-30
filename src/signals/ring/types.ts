@@ -24,6 +24,11 @@ export type RingEventType =
 export type RingMotionType = 'human' | 'vehicle' | 'package_delivery' | 'other_motion' | 'motion';
 
 /**
+ * `sub_type` values on `subscription_activated` and `subscription_deactivated`.
+ */
+export type RingSubscriptionType = 'paid' | 'trial';
+
+/**
  * A Ring webhook payload.
  */
 export type RingWebhookEvent = {
@@ -37,11 +42,22 @@ export type RingWebhookEvent = {
     id: string;
     type: RingEventType | (string & {});
     attributes: {
+      /** Device ID for device events, account ID for app integration events, `subscriptions` for subscription events. */
       source: string;
-      source_type: string;
-      timestamp: number;
-      sub_type?: RingMotionType | (string & {});
+      /** Subscription ID, on subscription events. */
+      source_id?: string;
+      /** `devices` for device events, `users` for app integration events. */
+      source_type?: string;
+      /** Epoch milliseconds. Missing on subscription events. */
+      timestamp?: number;
+      /** What caused a motion event, or `paid` / `trial` on subscription events. */
+      sub_type?: RingMotionType | RingSubscriptionType | (string & {});
+      /** Cameras involved, on devices with more than one. */
       component_ids?: string[];
+      /** Subscription plan ID, on subscription events. `null` for trials. */
+      plan_id?: string | null;
+      /** When the billing cycle or trial ends, as an ISO 8601 date, on subscription events. */
+      expires_at?: string;
     };
   };
 };

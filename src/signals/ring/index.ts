@@ -9,6 +9,7 @@ export type {
   RingMotionType,
   RingSignalsOptions,
   RingSnapshotToolOptions,
+  RingSubscriptionType,
   RingTargetResolver,
   RingToolsOptions,
   RingWebhookEvent,

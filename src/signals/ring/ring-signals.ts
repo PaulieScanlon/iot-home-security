@@ -193,7 +193,7 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
     }
 
     const targets = await this.#resolveTargets(event);
-    const { source: deviceId, timestamp, sub_type: motionType } = event.data.attributes;
+    const { source, source_type: sourceType, timestamp, sub_type: subType } = event.data.attributes;
 
     for (const target of targets) {
       await this.notify(
@@ -203,14 +203,14 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
           priority: notification.priority,
           summary: notification.summary,
           attributes: {
-            deviceId,
-            timestamp,
-            ...(motionType ? { motionType } : {}),
+            ...(sourceType === "devices" ? { deviceId: source } : {}),
+            ...(timestamp !== undefined ? { timestamp } : {}),
+            ...(event.data.type === "motion_detected" && subType ? { motionType: subType } : {}),
             ...primitiveAttributes(notification.attributes?.(event)),
           },
           payload: event.data,
           dedupeKey: `ring:${event.meta.request_id}:${target.threadId}`,
-          ...(notification.coalesce ? { coalesceKey: `ring:${event.data.type}:${deviceId}` } : {})
+          ...(notification.coalesce ? { coalesceKey: `ring:${event.data.type}:${source}` } : {})
         },
         target
       );
