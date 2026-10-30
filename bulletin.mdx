@@ -1,0 +1,127 @@
+---
+title: "Introducing Ring Signals for Mastra Agents"
+publishedAt: "2026-10-29"
+author: "Paul Scanlon"
+summary: "Your agents can now react to doorbell presses and motion from Ring cameras."
+draft: false
+topic: agents
+tags: [features]
+---
+
+<!-- [P1 — WHAT: 2-3 short sentences naming the capability with docs link on first mention. [Ring signals](https://mastra.ai/integrations/channels/ring) let a Mastra agent receive doorbell presses, motion, and other events from Ring doorbells and cameras; each event arrives in an agent thread as a [notification signal](https://mastra.ai/docs/signals/notifications). The agent gets `ring_snapshot` and `ring_clip` tools to see who is at the door. Use one of the corpus opener shapes.] -->
+
+Your Mastra agents can now receive Ring doorbell events using [Ring signals](https://mastra.ai/integrations/channels/ring). Each event arrives in the agent's thread as a [notification signal](https://mastra.ai/docs/signals/notifications) with a priority so your agent can...
+
+<!-- [P2 — WHY: why this shipped — the failure mode without it, or the reason it exists as a first-class thing. Ring doesn't give out shareable links to its media, and every webhook, account link, and download needs Ring's signatures, nonces, and tokens. `RingSignals` adds the routes Ring calls, verifies them, stores and refreshes tokens, and serves signed media links from your own server. Not a repeat of P1's mechanic.] -->
+
+Before an agent sees a single Ring event, each Ring account has to be linked with a token exchange, and every webhook Ring sends has to be verified against its signature. Ring also doesn't give out shareable links to its media. `RingSignals` adds the routes Ring calls to your Mastra server, refreshes each account's tokens before they expire, and serves snapshots and clips as signed links from your own server.
+
+<!-- <Video src="" autoPlay muted loop /> -->
+
+_A doorbell press arrives in the agent's thread as a `button_press` notification, and the agent fetches a snapshot of who is at the door._
+
+<!-- [P3 — BEFORE/AFTER (where applicable): name the old shape and the new shape. Before: connecting Ring meant building account linking, webhook verification, token refresh, and a media proxy yourself. After: `new RingSignals()` in the agent's `signals` array, with the `/ring` routes added automatically. Plain contrast, no marketing. Skip if there's no meaningful "before".] -->
+
+Before Ring signals, connecting a Ring doorbell to an agent meant writing a custom signal provider and registering your own API routes for account linking, webhooks, and media downloads. Now you add `new RingSignals()` to the agent's `signals` array, and the `/ring` routes are added to your Mastra server automatically when the agent is registered.
+
+<!-- [P4 — HOW / deeper technical (optional): 1-3 sentences with backticked symbols and one behaviour detail the reader might find helpful. Snapshot and clip tools send media as file attachments on channel threads, so Ring alerts in iMessage or Slack arrive with the image and video. `visibleToModel: true` on `ring_clip` lets a video-capable model watch the clip. NOT a spec dump.] -->
+
+On channel threads like iMessage or Slack, `ring_snapshot` and `ring_clip` send the media as file attachments, so Ring alerts arrive in the chat with the image and video. Set `visibleToModel: true` on `ring_clip` when the agent uses a model that accepts video input, and the agent watches the clip as well as the snapshot.
+
+## Get started
+
+Install Ring signals with the storage and memory packages:
+
+```bash title="Terminal"
+npm install @mastra/ring-signals @mastra/libsql @mastra/memory
+```
+
+<Note>Requires `@mastra/ring-signals@<version>` and `@mastra/core@<version>` or later, added in [PR #<PR>](https://github.com/mastra-ai/mastra/pull/<PR>).</Note>
+
+Add `RingSignals` to the agent's `signals` array, so each Ring event (a doorbell press or motion) arrives in the agent's thread as a notification signal:
+
+```typescript title="src/mastra/agents/home-agent.ts"
+import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
+import { RingSignals } from "@mastra/ring-signals";
+
+export const homeAgent = new Agent({
+  id: "home-agent",
+  name: "Home Agent",
+  instructions: "Watch the front door and say briefly whether each event needs attention.",
+  model: "openai/gpt-5-mini",
+  memory: new Memory({
+    options: {
+      observationalMemory: true
+    }
+  }),
+  signals: [new RingSignals()]
+});
+```
+
+Register the agent and a storage adapter on the Mastra instance:
+
+```typescript title="src/mastra/index.ts"
+import { Mastra } from "@mastra/core";
+import { LibSQLStore } from "@mastra/libsql";
+import { homeAgent } from "./agents/home-agent";
+
+export const mastra = new Mastra({
+  agents: { homeAgent },
+  storage: new LibSQLStore({
+    id: "mastra-storage",
+    url: "file:./mastra.db"
+  })
+});
+```
+
+### Multi-player alerts
+
+To enable multi-player alerts
+
+By default, `RingSignals` sends events to its own thread, using the device ID as the `threadId` and the agent's `id` as the `resourceId`. To get Ring alerts in a [channel](https://mastra.ai/docs/channels), set `target` and the channel's `resolveResourceId` and `resolveThreadId` to the same values.
+
+This example uses [iMessage](https://mastra.ai/blog/introducing-imessage-support). Install the iMessage adapter:
+
+```bash title="Terminal"
+npm install @photon-ai/chat-adapter-imessage
+```
+
+Point the iMessage channel and `RingSignals` at the same thread:
+
+```typescript title="src/mastra/agents/home-agent.ts"
+import { Agent } from "@mastra/core/agent";
+import { Memory } from "@mastra/memory";
+import { RingSignals } from "@mastra/ring-signals";
+import { createiMessageAdapter } from "@photon-ai/chat-adapter-imessage";
+
+const resourceId = "home-agent";
+const threadId = "ring-alerts";
+
+export const homeAgent = new Agent({
+  // ...
+  id: resourceId,
+  channels: {
+    resolveResourceId: () => resourceId,
+    resolveThreadId: () => threadId,
+    adapters: {
+      imessage: { adapter: createiMessageAdapter() }
+    }
+  },
+  signals: [
+    new RingSignals({
+      target: { resourceId, threadId }
+    })
+  ]
+});
+```
+
+For more information and full configuration options, see:
+
+- [RingSignals reference](https://mastra.ai/reference/signals/ring-signals)
+- [Ring integration guide](https://mastra.ai/integrations/channels/ring)
+- [Notification signals](https://mastra.ai/docs/signals/notifications)
+
+
+
+
