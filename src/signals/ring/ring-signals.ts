@@ -127,26 +127,14 @@ export class RingSignals extends SignalProvider<"ring-signals"> {
   }
 
   /**
-   * Registers the Ring routes on the Mastra server when the agent is added to Mastra,
-   * so they don't need to be added to `server.apiRoutes` by hand.
-   *
-   * Temporary: remove once `@mastra/core` merges `getRoutes()` from signal providers
-   * itself (https://github.com/mastra-ai/mastra/pull/28575). Core skips routes that are
-   * already registered, so keeping this alongside the core hook won't mount them twice.
+   * Warns when credentials are missing as soon as the agent is added to Mastra.
+   * Mastra registers the routes from `getRoutes()` itself.
    */
   override __registerMastra(mastra: Parameters<SignalProvider["__registerMastra"]>[0]): void {
     super.__registerMastra(mastra);
 
     if (this.#missingConfig.length > 0) {
       mastra.getLogger()?.warn(`[Ring] RingSignals is missing ${this.#missingConfig.join(", ")}. Account linking, webhooks and media will fail until it's set.`);
-    }
-
-    const server = mastra.getServer() ?? {};
-    const existingRoutes = server.apiRoutes ?? [];
-    const newRoutes = this.getRoutes().filter((route) => !existingRoutes.some((existing) => existing.path === route.path && existing.method === route.method));
-
-    if (newRoutes.length > 0) {
-      mastra.setServer({ ...server, apiRoutes: [...existingRoutes, ...newRoutes] });
     }
   }
 
